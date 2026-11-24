@@ -3,7 +3,7 @@
 //! the daemon closes the connection.
 
 /// A user's command.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Command {
     /// Show the agents' live views.
     Watch,
@@ -11,22 +11,35 @@ pub enum Command {
     Stop,
     /// Let every agent go on.
     Resume,
+    /// Stop the agents with this name, or this session number.
+    StopOne(String),
+    /// Let the agents with this name, or this session number, go on.
+    ResumeOne(String),
 }
 
 impl Command {
-    pub fn line(self) -> &'static str {
+    pub fn line(&self) -> String {
+        let one =
+            |word: &str, agent: &str| format!("{word} {}\n", agent.replace(['\n', '\r'], " "));
         match self {
-            Command::Watch => "watch\n",
-            Command::Stop => "stop\n",
-            Command::Resume => "resume\n",
+            Command::Watch => "watch\n".to_owned(),
+            Command::Stop => "stop\n".to_owned(),
+            Command::Resume => "resume\n".to_owned(),
+            Command::StopOne(agent) => one("stop", agent),
+            Command::ResumeOne(agent) => one("resume", agent),
         }
     }
 
+    /// A line as read, or the words of the command line, joined by spaces.
     pub fn parse(line: &str) -> Option<Self> {
-        match line.trim_end() {
-            "watch" => Some(Command::Watch),
-            "stop" => Some(Command::Stop),
-            "resume" => Some(Command::Resume),
+        let line = line.trim_end();
+        let (word, agent) = line.split_once(' ').unwrap_or((line, ""));
+        match (word, agent.trim()) {
+            ("watch", "") => Some(Command::Watch),
+            ("stop", "") => Some(Command::Stop),
+            ("resume", "") => Some(Command::Resume),
+            ("stop", agent) => Some(Command::StopOne(agent.to_owned())),
+            ("resume", agent) => Some(Command::ResumeOne(agent.to_owned())),
             _ => None,
         }
     }

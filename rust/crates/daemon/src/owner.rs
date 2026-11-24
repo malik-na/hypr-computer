@@ -21,6 +21,7 @@ use tools::Admit;
 use tracing::info;
 
 mod pass;
+mod stop_one;
 mod stops;
 mod views;
 
@@ -46,6 +47,10 @@ enum Msg {
     StopAll(oneshot::Sender<Reply>),
     /// `hypr-computer resume`.
     ResumeAll(oneshot::Sender<Reply>),
+    /// `hypr-computer stop <agent>`.
+    StopOne(String, oneshot::Sender<Reply>),
+    /// `hypr-computer resume <agent>`.
+    ResumeOne(String, oneshot::Sender<Reply>),
     Stop,
 }
 
@@ -138,7 +143,18 @@ impl Owner {
         self.ask(Msg::ResumeAll).await
     }
 
-    async fn ask(&self, msg: fn(oneshot::Sender<Reply>) -> Msg) -> Option<Reply> {
+    /// `hypr-computer stop <agent>`: answers once that agent is stopped.
+    /// `None` only if the owner has stopped.
+    pub async fn stop_one(&self, agent: String) -> Option<Reply> {
+        self.ask(|reply| Msg::StopOne(agent, reply)).await
+    }
+
+    /// `hypr-computer resume <agent>`. `None` only if the owner has stopped.
+    pub async fn resume_one(&self, agent: String) -> Option<Reply> {
+        self.ask(|reply| Msg::ResumeOne(agent, reply)).await
+    }
+
+    async fn ask(&self, msg: impl FnOnce(oneshot::Sender<Reply>) -> Msg) -> Option<Reply> {
         let (reply, answer) = oneshot::channel();
         self.tx.send(msg(reply)).ok()?;
         answer.await.ok()
@@ -237,6 +253,8 @@ async fn run(mut rx: mpsc::UnboundedReceiver<Msg>, mut state: State) {
             Msg::Watch(reply) => state.watch(reply),
             Msg::StopAll(reply) => state.stop_all(reply),
             Msg::ResumeAll(reply) => state.resume_all(reply),
+            Msg::StopOne(agent, reply) => state.stop_one(&agent, reply),
+            Msg::ResumeOne(agent, reply) => state.resume_one(&agent, reply),
             Msg::Stop => stopping = true,
         }
         if stopping && state.sessions.open_count() == 0 {

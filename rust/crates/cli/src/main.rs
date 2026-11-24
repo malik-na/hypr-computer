@@ -17,17 +17,23 @@ const ANSWER_TIME: Duration = Duration::from_secs(30);
 
 const USAGE: &str = "usage: hypr-computer <command>
 
-  watch    show the agents' screens (workspace 10)
-  stop     stop every agent, and every one that starts, until resume
-  resume   let every agent go on";
+  watch            show the agents' screens (workspace 10)
+  stop             stop every agent, and every one that starts, until resume
+  resume           let every agent go on
+  stop <agent>     stop the agents of that name, or that session number
+  resume <agent>   let them go on";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let command = match args.as_slice() {
-        [name] if Command::parse(name).is_some() => Command::parse(name),
         [help] if ["help", "-h", "--help"].contains(&help.as_str()) => {
             println!("{USAGE}");
             return ExitCode::SUCCESS;
+        }
+        [word] => Command::parse(word),
+        // An agent's name may be several words.
+        [word, agent @ ..] if !agent.join("").trim().is_empty() => {
+            Command::parse(&format!("{word} {}", agent.join(" ")))
         }
         _ => None,
     };
