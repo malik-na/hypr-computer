@@ -30,7 +30,11 @@ jobs:
         with:
           toolchain: ${{ steps.toolchain.outputs.channel }}
           components: rustfmt
-      - run: cargo fmt --all --check
+      - run: |
+          cargo fmt --all --check || {
+            echo "::error::Formatting differs. Fix: run 'cargo fmt' in rust/ and commit the result."
+            exit 1
+          }
 
   clippy:
     strategy:
@@ -49,7 +53,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
-      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - run: |
+          cargo clippy --locked --workspace --all-targets -- -D warnings || {
+            echo "::error::clippy failed. Fix what it names above. For unwrap/expect/panic: return the error with '?' or handle it with a match; tests may unwrap. See AGENTS.md, 'Rust rewrite'."
+            exit 1
+          }
 
   test:
     strategy:
