@@ -175,6 +175,7 @@ def test_open_url_on_the_agent_display_uses_a_browser_of_its_own_and_waits_for_t
     profile = os.path.join(apps.hypr.root, "hypr-computer-browser")
     (cmd,) = apps.hypr.dispatched("exec_cmd")
     assert f"chromium --force-renderer-accessibility --user-data-dir={profile} --no-first-run" in cmd
+    assert " --disable-extensions " in cmd  # an extension installed for every profile opened a sign-in page
     assert cmd.endswith(" https://example.com\"" + SILENTLY_THERE)
     monkeypatch.setenv("HYPR_COMPUTER_BROWSER", "chromium --user-data-dir=/tmp/mine")
     apps.call("open_url", url="https://example.com", wait_ms=0, screenshot=False)
