@@ -16,34 +16,40 @@ const RED: [u8; 3] = [0xd0, 0x20, 0x20];
 const BLUE: [u8; 3] = [0x20, 0x40, 0xd0];
 
 /// The user's desktop, as the daemon's environment points to it: a Wayland
-/// display, and a session bus in the user's runtime dir, each a socket that
-/// notes whether anything connected.
+/// display, and a session bus in the user's runtime dir. The display notes
+/// whether anything connected; see `_bus_listener` for why the bus doesn't.
 struct Desktop {
     display: PathBuf,
     bus: PathBuf,
-    listeners: Vec<UnixListener>,
+    /// The user's Wayland display: nothing the agent runs may connect to it.
+    display_listener: UnixListener,
+    /// The user's session bus, kept bound so the daemon's own connection to
+    /// it (it sends notices there, #29) succeeds. Not watched: the std
+    /// library can't tell the daemon's connection from the app's (peer
+    /// credentials are unstable, and this crate has no `libc`/`nix` and
+    /// forbids `unsafe`). The app's reach for the bus is covered instead by
+    /// `ready["bus"] == null` and a runtime dir of its own, asserted below.
+    _bus_listener: UnixListener,
 }
 
 impl Desktop {
     fn new(env: &Env) -> Desktop {
         let display = env.path("users-desktop");
         let bus = env.runtime_dir().join("bus");
-        let listeners = [&display, &bus]
-            .map(|socket| {
-                let listener = UnixListener::bind(socket).unwrap();
-                listener.set_nonblocking(true).unwrap();
-                listener
-            })
-            .into();
+        let display_listener = UnixListener::bind(&display).unwrap();
+        display_listener.set_nonblocking(true).unwrap();
+        let bus_listener = UnixListener::bind(&bus).unwrap();
         Desktop {
             display,
             bus,
-            listeners,
+            display_listener,
+            _bus_listener: bus_listener,
         }
     }
 
+    /// Whether anything connected to the user's display.
     fn was_reached(&self) -> bool {
-        self.listeners.iter().any(|l| l.accept().is_ok())
+        self.display_listener.accept().is_ok()
     }
 }
 
