@@ -6,6 +6,7 @@
 #![allow(dead_code)]
 
 pub mod app;
+pub mod hyprland;
 mod image;
 
 pub use image::Image;

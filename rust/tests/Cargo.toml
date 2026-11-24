@@ -84,6 +84,10 @@ path = "daemon_signal_spec.rs"
 name = "shim_exit_spec"
 path = "shim_exit_spec.rs"
 
+[[test]]
+name = "desktop"
+path = "desktop.rs"
+
 # The tiny Wayland app the tests put on a screen (see support/app.rs).
 [[bin]]
 name = "hc-test-app"
@@ -97,9 +101,12 @@ wayland-protocols = { version = "0.32.13", features = ["client"] }
 xkbcommon = "0.8.0"
 
 [dev-dependencies]
+adapters.workspace = true
 base64 = "0.22.1"
 command-fds = "0.3.3"
 png = "0.17.16"
+ports.workspace = true
+tokio.workspace = true
 toml = "0.9"
 wayland-client = "0.31.15"
 wayland-protocols = { version = "0.32.13", features = ["client", "unstable"] }

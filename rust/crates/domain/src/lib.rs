@@ -8,5 +8,6 @@
 pub mod lifecycle;
 pub mod paths;
 pub mod session;
+pub mod view;
 
 pub use session::{EndReason, Gone, SessionId, Sessions, Stepped};

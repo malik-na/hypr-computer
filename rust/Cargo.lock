@@ -6,7 +6,9 @@ version = 4
 name = "adapters"
 version = "0.0.0"
 dependencies = [
+ "domain",
  "ports",
+ "tokio",
 ]
 
 [[package]]
@@ -1736,11 +1738,14 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 name = "workspace-tests"
 version = "0.0.0"
 dependencies = [
+ "adapters",
  "base64",
  "command-fds",
  "png",
+ "ports",
  "serde_json",
  "tempfile",
+ "tokio",
  "toml",
  "wayland-client",
  "wayland-protocols",
