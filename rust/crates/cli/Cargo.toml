@@ -1,0 +1,18 @@
+[package]
+name = "cli"
+description = "hypr-computer: the user's commands, answered by the daemon."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "hypr-computer"
+path = "src/main.rs"
+
+[dependencies]
+domain.workspace = true
+
+[lints]
+workspace = true

@@ -49,6 +49,8 @@ pub fn bin(name: &str) -> PathBuf {
                 "screen",
                 "-p",
                 "workspace-tests",
+                "-p",
+                "cli",
             ])
             .arg("--manifest-path")
             .arg(workspace.join("Cargo.toml"))
@@ -58,7 +60,7 @@ pub fn bin(name: &str) -> PathBuf {
             .expect("run cargo build");
         assert!(
             status.success(),
-            "building the daemon, shim, screen and test app failed"
+            "building the daemon, shim, screen, CLI and test app failed"
         );
         target.join("debug")
     });
@@ -71,6 +73,46 @@ pub fn daemon_bin() -> PathBuf {
 
 pub fn shim_bin() -> PathBuf {
     bin("hypr-computer-shim")
+}
+
+/// What `hypr-computer <args>` printed, and whether it succeeded.
+pub struct Ran {
+    pub success: bool,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+/// Runs `hypr-computer <args>` as the user runs it.
+pub fn hypr_computer(env: &Env, args: &[&str]) -> Ran {
+    let mut cli = env
+        .command(&bin("hypr-computer"))
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let status = wait_exit(&mut cli, TIMEOUT).unwrap_or_else(|| {
+        let _ = cli.kill();
+        panic!("hypr-computer {args:?} didn't finish")
+    });
+    // It has exited, so its output is all in the pipes.
+    let (mut stdout, mut stderr) = (String::new(), String::new());
+    cli.stdout
+        .take()
+        .unwrap()
+        .read_to_string(&mut stdout)
+        .unwrap();
+    cli.stderr
+        .take()
+        .unwrap()
+        .read_to_string(&mut stderr)
+        .unwrap();
+    Ran {
+        success: status.success(),
+        stdout,
+        stderr,
+    }
 }
 
 /// A throwaway home and `$XDG_RUNTIME_DIR` under /tmp (short, so the socket

@@ -169,6 +169,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "cli"
+version = "0.0.0"
+dependencies = [
+ "domain",
+]
+
+[[package]]
 name = "command-fds"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

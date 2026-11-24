@@ -31,23 +31,29 @@ pub struct Desktop {
     pub hyprland: Hyprland,
 }
 
+/// The desktop's compositor, started on `socket`, once it is ready.
+fn compositor(socket: &Path) -> (Child, ChildStdin, BufReader<ChildStdout>) {
+    let mut compositor = Command::new(bin("hypr-computer-screen"))
+        .arg(socket)
+        .env_clear()
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let stdin = compositor.stdin.take().unwrap();
+    let mut stdout = BufReader::new(compositor.stdout.take().unwrap());
+    let mut ready = String::new();
+    stdout.read_line(&mut ready).unwrap();
+    assert_eq!(ready, "ready\n", "the desktop's compositor didn't start");
+    (compositor, stdin, stdout)
+}
+
 impl Desktop {
     pub fn start(env: &Env) -> Desktop {
         let dir = env.path("desktop");
         std::fs::create_dir(&dir).unwrap();
         let socket = dir.join("wayland-0");
-        let mut compositor = Command::new(bin("hypr-computer-screen"))
-            .arg(&socket)
-            .env_clear()
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .spawn()
-            .unwrap();
-        let stdin = compositor.stdin.take().unwrap();
-        let mut stdout = BufReader::new(compositor.stdout.take().unwrap());
-        let mut ready = String::new();
-        stdout.read_line(&mut ready).unwrap();
-        assert_eq!(ready, "ready\n", "the desktop's compositor didn't start");
+        let (compositor, stdin, stdout) = compositor(&socket);
         Desktop {
             compositor,
             stdin,
@@ -55,6 +61,18 @@ impl Desktop {
             socket,
             hyprland: Hyprland::start(&dir),
         }
+    }
+
+    /// Restarts the compositor, as when Hyprland restarts: every window on
+    /// the desktop goes.
+    pub fn restart(&mut self) {
+        let _ = self.compositor.kill();
+        let _ = self.compositor.wait();
+        let lock = self.socket.with_extension("lock");
+        for file in [&self.socket, &lock] {
+            let _ = std::fs::remove_file(file);
+        }
+        (self.compositor, self.stdin, self.stdout) = compositor(&self.socket);
     }
 
     /// Points `cmd` (the daemon) at this desktop, as a Hyprland session does.
