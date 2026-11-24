@@ -166,6 +166,17 @@ class FakeHyprland:
             return f"error: unknown Lua {code!r}"
         return "ok"
 
+    def open_window(self, w: dict) -> dict:
+        """A window opening as Hyprland opens it: a rule matching its class may put it on another workspace."""
+        for r in self.window_rules.values():
+            pattern = r.get("match", {}).get("class")
+            if r.get("enabled", True) and pattern and "workspace" in r and re.fullmatch(pattern, w["class"]):
+                name = r["workspace"].removesuffix(" silent").removeprefix("name:")
+                shown = next((m for m in self.monitors if m["activeWorkspace"]["name"] == name), None)
+                w = {**w, "workspace": {"id": -1, "name": name}, "monitor": shown["id"] if shown else w["monitor"]}
+        self.clients.append(w)
+        return w
+
     def activate(self, w: dict) -> None:
         ruled = [r for r in self.window_rules.values() if r.get("enabled", True)
                  and r.get("match", {}).get("workspace", "").removeprefix("name:") == w["workspace"]["name"]]
