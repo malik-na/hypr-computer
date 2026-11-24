@@ -6,7 +6,12 @@
 #
 #   specs/check.sh            needs java 11 or newer on PATH, or JAVA=/path/to/java
 #
-# The checks themselves are the list at the bottom of this file.
+# The checks are discovered, there is no list to edit:
+#   - every SPEC.tla with a SPEC.cfg: SPEC.cfg must pass, and SPEC.md must exist.
+#   - every other BUG.cfg is a buggy variant. Its header comment says what it must violate:
+#         \* check: SPEC invariant PROPERTY
+#         \* check: SPEC liveness PROPERTY
+#     A .cfg without a valid header, or naming a spec or property that doesn't exist, fails this script.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -133,18 +138,62 @@ expect_liveness() {
     fi
 }
 
-# ---- The checks. Add one line per config when you add a spec or a buggy variant.
-expect_pass      SessionLifecycle
-expect_invariant SessionLifecycle HandOffEarly                 ToolCallOnlyOnReadyScreen
-expect_liveness  SessionLifecycle CleanupDependsOnDyingProcess ResourcesEventuallyReleased
-expect_pass      Stop
-expect_invariant Stop             CheckStopOnlyAtStart         NoCallServedWhileStopped
-expect_pass      TakeOver
-expect_invariant TakeOver         TakeOverMidCall              AgentAndUserNeverInterleave
-expect_liveness  TakeOver         AdmitWhileTaking             TakeOverTakesEffect
-expect_invariant TakeOver         EscapeForgetsWaitingCall     WaitingOnlyWhileTakenOver
-expect_invariant TakeOver         ClipboardKeptOnHandBack      ClipboardOnlyDuringTakeOver
-expect_invariant TakeOver         EndKeepsTakeOver             EndedSessionLeavesNothing
+# ---- Discover the checks.
+HEADER_FORMAT='\* check: <Spec> invariant|liveness <Property>'
+HEADER_RE='^\\\* check: ([A-Za-z0-9_]+) (invariant|liveness) ([A-Za-z0-9_]+)$'
+errors=""
+bad() { errors="$errors  $1"$'\n'; }
+checks=""       # one line per check: "pass SPEC" or "KIND SPEC BUG PROPERTY"
+
+# Pass 1: every spec, and the buggy configs that name it.
+for tla in *.tla; do
+    [ -e "$tla" ] || continue
+    spec=${tla%.tla}
+    [ -f "$spec.cfg" ] || continue
+    [ -f "$spec.md" ] || bad "$spec.md is missing: the notes of $spec.tla live in $spec.md, next to it"
+    checks="$checks""pass $spec"$'\n'
+    for cfg in *.cfg; do
+        bug=${cfg%.cfg}
+        [ -f "$bug.tla" ] && continue
+        header=$(grep -m1 -E '^\\\* check: ' "$cfg" || true)
+        [[ "$header" =~ $HEADER_RE ]] || continue
+        [ "${BASH_REMATCH[1]}" = "$spec" ] || continue
+        checks="$checks${BASH_REMATCH[2]} $spec $bug ${BASH_REMATCH[3]}"$'\n'
+    done
+done
+
+# Pass 2: every config that is not a spec's own must have a valid header, naming a spec and a property that exist.
+for cfg in *.cfg; do
+    [ -e "$cfg" ] || continue
+    bug=${cfg%.cfg}
+    [ -f "$bug.tla" ] && continue
+    header=$(grep -m1 -E '^\\\* check: ' "$cfg" || true)
+    if ! [[ "$header" =~ $HEADER_RE ]]; then
+        bad "$cfg has no valid header. It must have a line: $HEADER_FORMAT"
+        continue
+    fi
+    spec=${BASH_REMATCH[1]}; prop=${BASH_REMATCH[3]}
+    if [ ! -f "$spec.tla" ] || [ ! -f "$spec.cfg" ]; then
+        bad "$cfg: its header names $spec, but $spec.tla and $spec.cfg don't both exist. Header format: $HEADER_FORMAT"
+    elif ! grep -Eq "^$prop[[:space:]]*==" "$spec.tla"; then
+        bad "$cfg: its header names $prop, which $spec.tla doesn't define. Header format: $HEADER_FORMAT"
+    fi
+done
+
+if [ -n "$errors" ]; then
+    echo "check.sh: the specs folder is not set up correctly:" >&2
+    printf '%s' "$errors" >&2
+    exit 2
+fi
+
+while read -r kind spec bug prop; do
+    [ -n "$kind" ] || continue
+    case "$kind" in
+        pass) expect_pass "$spec" ;;
+        invariant) expect_invariant "$spec" "$bug" "$prop" ;;
+        liveness) expect_liveness "$spec" "$bug" "$prop" ;;
+    esac
+done <<<"$checks"
 
 heading "Summary"
 printf '%s' "$summary"
