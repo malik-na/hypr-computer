@@ -6,8 +6,9 @@
 //! the daemon's order of events decides, not when a notice arrives here.
 //!
 //! Between `taken` and `given` the user has the screen: the banner shows,
-//! and an input request of the agent's that comes meanwhile waits for the
-//! hand-back, so the user's input already forwarded lands first.
+//! and a request of the daemon's that comes meanwhile, but opening the view,
+//! waits for the hand-back: it is the call that waited, and the user's input
+//! forwarded before `given` must land, and reach the apps, before it runs.
 
 use std::collections::VecDeque;
 use std::error::Error;
@@ -181,14 +182,11 @@ impl State {
         }
     }
 
-    /// The daemon's request, answered now, or once the user hands back if
-    /// it is the agent's input.
+    /// The daemon's request, answered now, or once the user hands back.
+    /// Opening the view never waits: the user may have closed it.
     pub fn request(&mut self, request: Incoming) {
-        let input = matches!(
-            request,
-            Ok(Request::Act(_) | Request::Press(_) | Request::Release(_))
-        );
-        if (self.user.has_screen && input) || !self.user.deferred.is_empty() {
+        let view = matches!(request, Ok(Request::View(_)));
+        if (self.user.has_screen && !view) || !self.user.deferred.is_empty() {
             self.user.deferred.push_back(request);
             return;
         }
@@ -202,6 +200,10 @@ impl State {
     }
 
     fn answer_deferred(&mut self) {
+        if !self.user.deferred.is_empty() {
+            // The apps get the user's last input before the call goes on.
+            let _ = self.display.flush_clients();
+        }
         while !self.user.has_screen
             && let Some(request) = self.user.deferred.pop_front()
         {
