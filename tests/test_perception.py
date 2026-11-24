@@ -310,6 +310,29 @@ def test_ui_find_leaves_out_positions_it_cannot_trust(atspi):
             '"Apply" (not on screen, or its position is unknown)'), frame_extents
 
 
+def test_ui_find_disambiguates_incognito_and_helper_frames(atspi):
+    button = element("push button", "Reload", (40, 46, 34, 34), ["press"])
+    helper1 = element("frame", "", (0, 0, 500, 88), states=("enabled", "showing"))
+    helper2 = element("frame", "", (0, 0, 500, 89), states=("enabled", "showing"))
+    # Chromium Incognito on the agent display: AT-SPI appends "(Incognito)", window is not active,
+    # and two nameless helper frames sit alongside it.
+    incognito = element("frame", "Probe Page - Chromium (Incognito)", (0, 0, 621, 750),
+                        states=("enabled", "showing"), children=[button])
+    atspi.tree({"children": [element("application", "Chromium", pid=4242, children=[incognito, helper1, helper2])]})
+    assert atspi.call("ui_find", query="reload").splitlines()[1] == 'e1 push button "Reload" at (704, 101)'
+
+    # Unrelated title, but only one frame matches the window's size.
+    renamed = element("frame", "Different Title", (0, 0, 621, 750), states=("enabled", "showing"), children=[button])
+    atspi.tree({"children": [element("application", "Chromium", pid=4242, children=[renamed, helper1])]})
+    assert atspi.call("ui_find", query="reload").splitlines()[1] == 'e2 push button "Reload" at (704, 101)'
+
+    # Two same-size frames with unrelated titles remain ambiguous.
+    other = element("frame", "Other Window", (0, 0, 621, 750), states=("enabled", "showing"))
+    atspi.tree({"children": [element("application", "Chromium", pid=4242, children=[renamed, other])]})
+    with pytest.raises(Exception, match="can't tell which"):
+        atspi.call("ui_find", query="reload")
+
+
 def test_ui_act_finds_the_element_again_and_does_its_own_action(atspi):
     atspi.tree(chromium_page(APPLY, REMEMBER))
     atspi.call("ui_find", query="apply")

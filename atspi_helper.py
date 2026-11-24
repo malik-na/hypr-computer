@@ -42,9 +42,13 @@ class Window:
                           "may not have one (open_url and launch_app turn it on); use find_text instead.")
         frames = [f for f in (app.get_child_at_index(i) for i in range(app.get_child_count()))
                   if f is not None and not self.denied(f.get_name())]
-        named = [f for f in frames if f.get_name() == self.req["title"]]
+        title = self.req["title"]
+        named = [f for f in frames if f.get_name() == title]
+        prefixed = [f for f in frames if title and (f.get_name() or "").startswith(title)]
+        sized = [f for f in frames if self.window_div(f) is not None]
         active = [f for f in frames if "active" in states(f)]
-        frame = (named or (frames if len(frames) == 1 else active if len(active) == 1 else [None]))[0]
+        pick = next((c for c in (named, prefixed, frames, sized, active) if len(c) == 1), None)
+        frame = (named or pick or [None])[0]
         if frame is None:
             raise Refused(f"can't tell which of the app's {len(frames)} accessible windows is this one")
         return frame, self.window_div(frame)
