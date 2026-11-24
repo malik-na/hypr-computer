@@ -9,7 +9,7 @@ use smithay::backend::renderer::Offscreen;
 use smithay::backend::renderer::damage::OutputDamageTracker;
 use smithay::backend::renderer::pixman::PixmanRenderer;
 use smithay::desktop::{PopupManager, Space, Window};
-use smithay::input::SeatState;
+use smithay::input::{Seat, SeatState};
 use smithay::output::{Mode, Output, PhysicalProperties, Scale, Subpixel};
 use smithay::reexports::calloop::LoopSignal;
 use smithay::reexports::pixman;
@@ -18,9 +18,12 @@ use smithay::reexports::wayland_server::backend::{ClientData, ClientId, Disconne
 use smithay::utils::Transform;
 use smithay::wayland::compositor::{CompositorClientState, CompositorState};
 use smithay::wayland::output::OutputManagerState;
+use smithay::wayland::selection::data_device::DataDeviceState;
 use smithay::wayland::shell::xdg::XdgShellState;
 use smithay::wayland::shell::xdg::decoration::XdgDecorationState;
 use smithay::wayland::shm::ShmState;
+
+use crate::seat::new_seat;
 
 /// The screen's size as Smithay wants it.
 pub const WIDTH: i32 = SIZE.0 as i32;
@@ -49,6 +52,8 @@ pub struct State {
     pub xdg_shell_state: XdgShellState,
     pub shm_state: ShmState,
     pub seat_state: SeatState<State>,
+    pub data_device_state: DataDeviceState,
+    pub seat: Seat<State>,
     _output_manager_state: OutputManagerState,
     _xdg_decoration_state: XdgDecorationState,
 }
@@ -82,12 +87,16 @@ impl State {
         let mut space = Space::default();
         space.map_output(&output, (0, 0));
         let damage = OutputDamageTracker::from_output(&output);
+        let mut seat_state = SeatState::new();
+        let seat = new_seat(&mut seat_state, &display)?;
 
         Ok(State {
             compositor_state: CompositorState::new::<State>(&display),
             xdg_shell_state: XdgShellState::new::<State>(&display),
             shm_state: ShmState::new::<State>(&display, vec![]),
-            seat_state: SeatState::new(),
+            seat_state,
+            data_device_state: DataDeviceState::new::<State>(&display),
+            seat,
             _output_manager_state: OutputManagerState::new_with_xdg_output::<State>(&display),
             _xdg_decoration_state: XdgDecorationState::new::<State>(&display),
             display,

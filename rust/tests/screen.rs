@@ -7,7 +7,7 @@ mod support;
 use std::fs;
 use std::io::Read;
 use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
@@ -276,4 +276,67 @@ fn the_daemon_refuses_to_start_without_its_screen_program() {
         !env.socket().exists(),
         "it shouldn't listen without a screen to give"
     );
+}
+
+#[test]
+fn apps_on_the_screen_get_a_pointer_and_a_keyboard() {
+    let env = Env::new();
+    let _daemon = Daemon::start(&env);
+    let _agent = agent(&env);
+
+    let app = App::paint(&env, 1, RED, BLUE);
+    assert_eq!(
+        app.log.wait_for("ready")["seat"],
+        json!(["pointer", "keyboard"])
+    );
+}
+
+/// Before it has drawn, a window isn't set up for it: foot 1.16 crashed on
+/// a keyboard it got earlier.
+#[test]
+fn an_app_gets_the_keyboard_only_once_its_window_has_drawn() {
+    let env = Env::new();
+    let _daemon = Daemon::start(&env);
+    let _agent = agent(&env);
+
+    let app = App::paint(&env, 1, RED, BLUE);
+    assert_eq!(app.log.wait_for("keyboard")["drawn"], true);
+}
+
+/// foot, a terminal: it won't run on a screen without a clipboard.
+#[test]
+fn a_real_app_runs_on_the_screen_and_stays_up() {
+    let env = Env::new();
+    let _daemon = Daemon::start(&env);
+    let mut agent = agent(&env);
+    let empty = agent.screenshot();
+
+    let mut foot = env
+        .command(Path::new("foot"))
+        .arg("cat")
+        .env("WAYLAND_DISPLAY", env.screen_socket(1))
+        .env("LANG", "C.UTF-8")
+        .stdin(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("run foot; the tests need it installed");
+    let end = Instant::now() + support::TIMEOUT;
+    while agent.screenshot() == empty {
+        if let Some(status) = foot.try_wait().unwrap() {
+            let mut why = String::new();
+            foot.stderr
+                .take()
+                .unwrap()
+                .read_to_string(&mut why)
+                .unwrap();
+            panic!("foot exited ({status}):\n{why}");
+        }
+        assert!(Instant::now() < end, "foot drew nothing");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    std::thread::sleep(Duration::from_secs(1));
+    let still = foot.try_wait().unwrap();
+    let _ = foot.kill();
+    let _ = foot.wait();
+    assert_eq!(still, None, "foot didn't stay up");
 }

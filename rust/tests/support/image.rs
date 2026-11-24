@@ -5,6 +5,7 @@ use base64::engine::general_purpose::STANDARD;
 use serde_json::Value;
 
 /// A decoded screenshot, as 8-bit RGB.
+#[derive(PartialEq, Eq)]
 pub struct Image {
     pub width: u32,
     pub height: u32,

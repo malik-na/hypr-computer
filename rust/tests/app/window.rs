@@ -16,8 +16,9 @@ use crate::App;
 pub struct Window {
     pub surface: wl_surface::WlSurface,
     shm: wl_shm::WlShm,
-    xdg: xdg_surface::XdgSurface,
-    _toplevel: xdg_toplevel::XdgToplevel,
+    wm: xdg_wm_base::XdgWmBase,
+    /// Its xdg-shell roles, once it is open.
+    xdg: Option<(xdg_surface::XdgSurface, xdg_toplevel::XdgToplevel)>,
     /// The size the screen asked for, once it did.
     size: Option<(i32, i32)>,
     configured: bool,
@@ -29,18 +30,23 @@ impl Window {
         let shm: wl_shm::WlShm = globals.bind(qh, 1..=1, ())?;
         let wm: xdg_wm_base::XdgWmBase = globals.bind(qh, 1..=6, ())?;
         let surface = compositor.create_surface(qh, ());
-        let xdg = wm.get_xdg_surface(&surface, qh, ());
-        let toplevel = xdg.get_toplevel(qh, ());
-        toplevel.set_title("test app".to_owned());
-        surface.commit();
         Ok(Window {
             surface,
             shm,
-            xdg,
-            _toplevel: toplevel,
+            wm,
+            xdg: None,
             size: None,
             configured: false,
         })
+    }
+
+    /// Makes the surface a window, which the screen shows.
+    pub fn open(&mut self, qh: &QueueHandle<App>) {
+        let xdg = self.wm.get_xdg_surface(&self.surface, qh, ());
+        let toplevel = xdg.get_toplevel(qh, ());
+        toplevel.set_title("test app".to_owned());
+        self.surface.commit();
+        self.xdg = Some((xdg, toplevel));
     }
 
     pub fn configured(&self) -> bool {
@@ -114,14 +120,14 @@ impl Dispatch<xdg_wm_base::XdgWmBase, ()> for App {
 impl Dispatch<xdg_surface::XdgSurface, ()> for App {
     fn event(
         app: &mut Self,
-        _: &xdg_surface::XdgSurface,
+        xdg: &xdg_surface::XdgSurface,
         event: xdg_surface::Event,
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
         if let xdg_surface::Event::Configure { serial } = event {
-            app.window.xdg.ack_configure(serial);
+            xdg.ack_configure(serial);
             app.window.configured = true;
             app.dirty = true;
         }
