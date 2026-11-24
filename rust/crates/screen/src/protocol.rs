@@ -34,7 +34,8 @@ pub enum Request {
     /// [`Reply::Done`].
     Press(Point),
     Release(Point),
-    /// The apps' windows, oldest first, as a JSON array of
+    /// The apps' windows, oldest first (one an app brought back to the front
+    /// counts as new), as a JSON array of
     /// `{"app_id": .., "title": ..}`.
     Windows,
     /// Open the live view, a window with this title on the user's desktop.

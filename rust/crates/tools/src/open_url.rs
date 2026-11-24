@@ -16,6 +16,11 @@ impl Tool for OpenUrl {
                     "type": "string",
                     "description": "The page: an http:// or https:// URL.",
                 },
+                "private": {
+                    "type": "boolean",
+                    "description": "Open it in a private window, without your session's \
+                                    cookies. Default false.",
+                },
             },
             "required": ["url"],
         });
@@ -24,7 +29,8 @@ impl Tool for OpenUrl {
             description: "Open a web page in the browser on your screen. Returns once the page \
                           has loaded and is in front, so your next screenshot shows it. The \
                           browser starts the first time, with a fresh profile of your session's \
-                          own: cookies last until your session ends.",
+                          own: cookies last until your session ends. With `private`, the page \
+                          opens in a private window, which has none of them.",
             input_schema: schema.as_object().cloned().unwrap_or_default(),
         }
     }
@@ -36,7 +42,20 @@ impl Tool for OpenUrl {
     ) -> BoxFuture<'a, Result<ToolOutput, CallError>> {
         Box::pin(async move {
             let url = web_url(&args)?;
-            Ok(match screen.open_page(WebPage { url: url.clone() }).await {
+            let private = match args.get("private") {
+                None | Some(Value::Null) => false,
+                Some(Value::Bool(private)) => *private,
+                Some(other) => {
+                    return Err(CallError::InvalidArguments(format!(
+                        "`private` must be true or false, not {other}"
+                    )));
+                }
+            };
+            let page = WebPage {
+                url: url.clone(),
+                private,
+            };
+            Ok(match screen.open_page(page).await {
                 Ok(page) if page.loaded => ToolOutput::text(format!(
                     "Opened {} ({:?}); it has loaded and is on your screen.",
                     page.url, page.title

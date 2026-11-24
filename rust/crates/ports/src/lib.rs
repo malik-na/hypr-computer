@@ -122,6 +122,8 @@ pub enum Action {
 pub struct WebPage {
     /// An `http` or `https` URL with a host.
     pub url: String,
+    /// In a private window, which has none of the session's cookies.
+    pub private: bool,
 }
 
 /// A page the screen's browser opened, as it ended up.

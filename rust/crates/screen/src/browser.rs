@@ -60,12 +60,16 @@ const START_PAGE: &str = "data:,";
 const TWO_FRAMES: &str =
     "new Promise(done => requestAnimationFrame(() => requestAnimationFrame(() => done())))";
 
-/// A running browser, and the tab the agent's pages open in.
+/// A running browser, and the tabs the agent's pages open in.
 pub(crate) struct Browser {
     devtools: DevTools,
+    /// The tab normal pages open in.
     tab: Option<Tab>,
-    /// The start page is still in the history.
-    start_page: bool,
+    /// The tab private pages open in, in a window of its own.
+    private_tab: Option<Tab>,
+    /// The private windows' browser context: off the record, with cookies of
+    /// its own, all gone with the browser.
+    private: Option<String>,
     /// How many windows the screen had when the browser started, until its
     /// first window is on the screen.
     no_window_yet: Option<u64>,
@@ -78,14 +82,21 @@ struct Tab {
     session: String,
 }
 
+/// A page target, as `Target.getTargets` lists it.
+struct Page {
+    target: String,
+    context: String,
+    url: String,
+}
+
 impl ScreenChild {
     pub(crate) async fn open_web_page(&self, page: WebPage) -> Result<OpenedPage, ScreenError> {
         let mut running = self.browser.lock().await;
-        let tab = match self.tab_in(&mut running).await {
+        let (tab, on_start_page) = match self.tab_in(&mut running, page.private).await {
             // It exited as this call began, as when the agent has just
             // closed its last window: start it again.
             Err(_) if running.as_ref().is_some_and(|b| b.devtools.closed()) => {
-                self.tab_in(&mut running).await?
+                self.tab_in(&mut running, page.private).await?
             }
             other => other?,
         };
@@ -93,7 +104,7 @@ impl ScreenChild {
             return Err(ScreenError("the browser has exited".to_owned()));
         };
         let opened = browser.navigate(&tab, &page.url).await?;
-        if std::mem::take(&mut browser.start_page) {
+        if on_start_page {
             // The history holds only pages the agent opened: Back can't
             // lead to the start page.
             browser
@@ -113,9 +124,14 @@ impl ScreenChild {
         Ok(opened)
     }
 
-    /// The tab pages open in, in the running browser, which is started
-    /// first if it isn't running.
-    async fn tab_in(&self, running: &mut Option<Browser>) -> Result<Tab, ScreenError> {
+    /// The tab `private` or normal pages open in, in the running browser,
+    /// which is started first if it isn't running; and whether it shows the
+    /// start page.
+    async fn tab_in(
+        &self,
+        running: &mut Option<Browser>,
+        private: bool,
+    ) -> Result<(Tab, bool), ScreenError> {
         if running.as_ref().is_some_and(|b| b.devtools.closed()) {
             *running = None;
         }
@@ -123,7 +139,7 @@ impl ScreenChild {
             Some(browser) => browser,
             None => running.insert(self.start_browser().await?),
         };
-        browser.tab().await
+        browser.tab(private).await
     }
 
     async fn start_browser(&self) -> Result<Browser, ScreenError> {
@@ -183,7 +199,8 @@ impl ScreenChild {
             Ok(launched @ (Launched::Window { .. } | Launched::NoWindow { .. })) => Ok(Browser {
                 devtools,
                 tab: None,
-                start_page: true,
+                private_tab: None,
+                private: None,
                 no_window_yet: matches!(launched, Launched::NoWindow { .. }).then_some(before),
             }),
             Ok(Launched::Exited { status, output, .. }) => Err(ScreenError(format!(
@@ -222,39 +239,89 @@ impl ScreenChild {
 }
 
 impl Browser {
-    /// The tab pages open in: the last one, if it is still there, or else
-    /// the first page the browser has, or else a new one.
-    async fn tab(&mut self) -> Result<Tab, ScreenError> {
+    /// The tab `private` or normal pages open in: the last one, if it is
+    /// still there, or else another of the browser's normal pages, or else a
+    /// new window. And whether it shows the start page.
+    async fn tab(&mut self, private: bool) -> Result<(Tab, bool), ScreenError> {
+        let context = match (private, &self.private) {
+            (false, _) => None,
+            (true, Some(context)) => Some(context.clone()),
+            (true, None) => {
+                let created = self
+                    .devtools
+                    .call("Target.createBrowserContext", json!({}), None)
+                    .await?;
+                let context = string(&created, "browserContextId")?;
+                self.private = Some(context.clone());
+                Some(context)
+            }
+        };
+        let pages: Vec<Page> = self
+            .pages()
+            .await?
+            .into_iter()
+            .filter(|p| match &context {
+                Some(private) => p.context == *private,
+                None => self.private.as_ref() != Some(&p.context),
+            })
+            .collect();
+        let last = if private {
+            &self.private_tab
+        } else {
+            &self.tab
+        };
+        let found = match last {
+            Some(tab) => pages.iter().find(|p| p.target == tab.target),
+            None => None,
+        };
+        if let (Some(tab), Some(page)) = (last, found) {
+            return Ok((tab.clone(), page.url == START_PAGE));
+        }
+        let target = match (pages.first(), &context) {
+            (Some(page), None) => page.target.clone(),
+            _ => {
+                let mut params = json!({"url": START_PAGE, "newWindow": true});
+                if let Some(context) = &context {
+                    params["browserContextId"] = json!(context);
+                }
+                let created = self
+                    .devtools
+                    .call("Target.createTarget", params, None)
+                    .await?;
+                string(&created, "targetId")?
+            }
+        };
+        let on_start_page = pages
+            .iter()
+            .find(|p| p.target == target)
+            .is_none_or(|p| p.url == START_PAGE);
+        let tab = self.attach(target).await?;
+        *(if private {
+            &mut self.private_tab
+        } else {
+            &mut self.tab
+        }) = Some(tab.clone());
+        Ok((tab, on_start_page))
+    }
+
+    /// The browser's pages, in every window.
+    async fn pages(&self) -> Result<Vec<Page>, ScreenError> {
         let targets = self
             .devtools
             .call("Target.getTargets", json!({}), None)
             .await?;
-        let pages: Vec<&str> = targets["targetInfos"]
+        let field = |t: &Value, name: &str| t[name].as_str().unwrap_or_default().to_owned();
+        Ok(targets["targetInfos"]
             .as_array()
             .into_iter()
             .flatten()
             .filter(|t| t["type"] == "page")
-            .filter_map(|t| t["targetId"].as_str())
-            .collect();
-        if let Some(tab) = &self.tab
-            && pages.contains(&tab.target.as_str())
-        {
-            return Ok(tab.clone());
-        }
-        let target = match pages.first() {
-            Some(target) => (*target).to_owned(),
-            None => {
-                let created = self
-                    .devtools
-                    .call("Target.createTarget", json!({"url": START_PAGE}), None)
-                    .await?;
-                self.start_page = true;
-                string(&created, "targetId")?
-            }
-        };
-        let tab = self.attach(target).await?;
-        self.tab = Some(tab.clone());
-        Ok(tab)
+            .map(|t| Page {
+                target: field(t, "targetId"),
+                context: field(t, "browserContextId"),
+                url: field(t, "url"),
+            })
+            .collect())
     }
 
     /// A session on `target` that reports its lifecycle events.
@@ -280,6 +347,10 @@ impl Browser {
     /// Opens `url` in `tab`, and waits until it has loaded and painted.
     async fn navigate(&self, tab: &Tab, url: &str) -> Result<OpenedPage, ScreenError> {
         let session = Some(tab.session.as_str());
+        // Its tab in front, and its window in front of the others.
+        self.devtools
+            .call("Page.bringToFront", json!({}), session)
+            .await?;
         let deadline = Instant::now() + LOAD_TIME;
         let mut events = self.devtools.events();
         // Answered once the server has answered: a slow one is still loading.
