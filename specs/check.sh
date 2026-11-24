@@ -145,6 +145,11 @@ expect_liveness  TakeOver         AdmitWhileTaking             TakeOverTakesEffe
 expect_invariant TakeOver         EscapeForgetsWaitingCall     WaitingOnlyWhileTakenOver
 expect_invariant TakeOver         ClipboardKeptOnHandBack      ClipboardOnlyDuringTakeOver
 expect_invariant TakeOver         EndKeepsTakeOver             EndedSessionLeavesNothing
+expect_pass      Limits
+expect_invariant Limits           HideOnlyBeforeCapture        PasswordManagerNeverShown
+expect_invariant Limits           ExpiredLimitStillApplies     RefusedOnlyIfForbidden
+expect_invariant Limits           LimitsReadAtConnect          CallsKeepToLimits
+expect_invariant Limits           CheckOnlyRequestedUrl        OnlyListedSitesReached
 
 heading "Summary"
 printf '%s' "$summary"

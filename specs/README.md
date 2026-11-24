@@ -233,3 +233,65 @@ Events the spec doesn't allow in a state, and events for a session that is gone,
 - **The user's input itself.** The model has no step for it: the user's input reaches the screen exactly while `control` is `"User"`. The Rust state machine says so with `Effect::Forward`. A button or key the user still holds when they hand back is released by the hand-back.
 - **Which Escapes count.** Escape twice is one step here. In Rust the first Escape goes to the screen and the second hands back; any other key or click between them starts the count again.
 - **Time.** A call may wait as long as the user keeps the screen; an agent's client may give up on it, which is a disconnect or nothing.
+
+## Limits
+
+`Limits.tla` models the limits the user puts on agents with `hypr-computer allow`, and the block on password managers, which is always on. Out of the box an agent may do anything on its own screen except use a password manager. `hypr-computer allow` limits every agent to the apps it names, to the websites it names, or to looking only (read-only), for a set time (`--for`) or until `hypr-computer allow --off`. Each `allow` replaces the limits before it. A refused call is a tool error that tells the agent to ask the user.
+
+The user sets limits at any time, the clock runs, and agents call tools at any time. The browser's requests go through a proxy in the daemon, and the page it shows can send it anywhere (a redirect, a link, a request of its own). An app on the screen can start a password prompt at any time (gpg starts pinentry), including while a screenshot is being taken.
+
+A tool call is one step here: the guard admits or refuses it, and an admitted call does what it does. `Stop.tla` covers what happens during a call. A screenshot is two steps, its start and its end, so that a window can appear in between.
+
+### Properties
+
+| Property | In plain words |
+| --- | --- |
+| `CallsKeepToLimits` | Every call the guard admits is one the limits in force at that moment allow: a limit set mid-session applies to the next call |
+| `RefusedOnlyIfForbidden` | Every call those limits allow is admitted: no limit refuses more than it says, and an expired limit stops applying |
+| `OnlyListedSitesReached` | No request of the browser reaches a site the limits in force don't list: not the page asked for, a redirect from it, nor a request the page makes |
+| `PasswordManagerNeverShown` | No screenshot ever holds a password manager's window |
+| `PasswordManagerNeverUsed` | No password manager is launched or given input, whatever the user allowed |
+| `ReadOnlyOnlyLooks` | In read-only mode an agent only looks |
+| `BrowserOnlyThroughOpenUrl` | The browser is started only by `open_url`, pointed at the proxy, never by `launch_app` |
+| `NoLimitAllowsAll` | With no limit in force, everything is allowed but a password manager and launching the browser |
+
+The first two together say the guard decides exactly as the limits say. The next four state the rules on their own, so that a mistake in `Permits`, which both sides of the first two share, is still caught. There is no liveness property: every limit is checked when it is used.
+
+### The bugs it catches
+
+| Config | The bug | Property it violates |
+| --- | --- | --- |
+| `HideOnlyBeforeCapture.cfg` | v0.8 (fde9289) painted deny-listed windows black in each screenshot, looking for them when the capture began. A password manager that appeared or moved during the capture was in the picture; e6d3101 fixed it by looking again afterwards. Here, the screen never maps such a window. | `PasswordManagerNeverShown` |
+| `ExpiredLimitStillApplies.cfg` | v0.8's `hypr-computer allow --for` (d7f3efe): once the time was up, agents could only read the screen until the user renewed or removed the grant. For v1.0 the owner decided that an expired limit stops applying. | `RefusedOnlyIfForbidden` |
+| `LimitsReadAtConnect.cfg` | Not a past bug, the shape #31 warns of: the guard reads the limits once, when the session starts, so a limit set mid-session never applies to it. | `CallsKeepToLimits` |
+| `CheckOnlyRequestedUrl.cfg` | Not a past bug, the shape #32 warns of: only the URL given to `open_url` is checked, so a redirect, a link or a page's own request reaches a site that isn't listed. | `OnlyListedSitesReached` |
+
+TLC's counterexample for `HideOnlyBeforeCapture`: an agent launches an app, takes a screenshot (`ToolCall`: `capturing` becomes `TRUE`, `hidden` is `{}`), the app opens its window, starts a password prompt (`Spawn`), whose window maps (`MapWindow`), and the capture ends (`CaptureDone`) with `picture = {"vault"}`.
+
+### Rust names
+
+The rules are `domain::limits`, pure; the top of `rust/crates/domain/tests/limits.rs` documents the API in full. The daemon holds one `Limits` for every agent.
+
+| In the spec | Rust |
+| --- | --- |
+| `limits` | the daemon's `Limits`, replaced by `Limits::set(&allow, now)` on each `hypr-computer allow` and by `Limits::none()` on `--off`. It survives a restart of the daemon |
+| `now` | the time passed to every call of `Limits`; `domain` never reads a clock |
+| `InForce`, `InEffect` | `Limits::in_force(now)`; `until` is `Limits::until()` |
+| `Permits(Applied, act)`, `Admits` | `Limits::check(action, now)`, asked by the guard (`Registry::call`) at every call, with the limits as they are then |
+| `Acts`: `Look`, `Input`, `Launch`, `Open` | `Action::Look`, `Action::Input { app }`, `Action::Launch { program }`, `Action::Open { host }` |
+| a refused call | `Err(Refusal)`, whose text the agent gets as a failed tool call |
+| `ProxyLets(s)` | `Limits::allows_site(host, now)`, asked by the proxy for every request |
+| `Vaults` | `limits::is_password_manager(name)`, on a program's file name and a window's app id |
+| `Browser` | `limits::BROWSER`, `"browser"`; `limits::is_browser(program)` for `launch_app` |
+| `MapWindow` of a password manager | the screen never maps its window, and ends its app |
+| `Fetch`, `PageGoes` | the browser, started with `--proxy-server` pointing at the daemon's proxy and `--proxy-bypass-list=<-loopback>` |
+
+`rust/crates/domain/tests/limits_spec.rs` property-tests `check` and `allows_site` against every property above but `PasswordManagerNeverShown`, over random runs of limits, time and calls; it fails when expiry is ignored, when an expired limit leaves agents read-only, and when the password-manager or browser rule depends on the limits. The black-box tests in `rust/tests/` cover `LimitsReadAtConnect` (a limit set mid-session) and `PasswordManagerNeverShown` (a prompt that appears while screenshots are taken).
+
+### Left out
+
+- **Lists.** The model names one app or one site, or all, and one kind of limit at a time; `limits_spec.rs` covers lists and mixes.
+- **What happens during a call.** A limit set while a call is in progress applies to the next call; `Stop.tla` covers stopping a call halfway.
+- **Several sessions.** Limits are the same for every agent; one session shows every way a call can go.
+- **Programs that ignore the proxy.** Only the agent's browser is started pointed at it (and every app on the screen is told of it, in `http_proxy` and the like). A program that makes its own connections isn't limited, and the docs say so.
+- **How a site's name is resolved.** The proxy checks the host the browser asked for, before it resolves it.
