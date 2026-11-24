@@ -14,9 +14,12 @@ use std::io;
 use std::os::fd::AsFd;
 use std::os::unix::fs::FileExt;
 use std::os::unix::net::UnixStream;
+use std::time::{Duration, Instant};
 
 use domain::view::APP_ID;
+use rustix::event::{PollFd, PollFlags, Timespec, poll};
 use rustix::fs::{MemfdFlags, memfd_create};
+use rustix::io::Errno;
 use smithay::backend::allocator::Fourcc;
 use smithay::reexports::calloop::generic::Generic;
 use smithay::reexports::calloop::{Interest, Mode, PostAction};
@@ -35,8 +38,15 @@ const FRAME_BYTES: usize = WIDTH as usize * HEIGHT as usize * 4;
 /// The shared memory: two frames.
 const MEMORY_BYTES: usize = 2 * FRAME_BYTES;
 
+/// How long the desktop may take to answer as the view opens. The screen
+/// serves nothing else meanwhile, and the daemon ends a session whose screen
+/// doesn't answer it within 10 s: a desktop that hangs must cost only the view.
+const ANSWER_TIME: Duration = Duration::from_secs(2);
+
 /// The view's window and the connection it lives on.
 pub struct View {
+    /// Tells this view from one opened after it.
+    id: u64,
     connection: Connection,
     qh: QueueHandle<State>,
     surface: wl_surface::WlSurface,
@@ -68,6 +78,7 @@ impl State {
         };
         let stream = UnixStream::connect(desktop).map_err(|e| failed(&e))?;
         let connection = Connection::from_socket(stream).map_err(|e| failed(&e))?;
+        answers(&connection).map_err(|e| failed(&e))?;
         let (globals, mut queue) =
             registry_queue_init::<State>(&connection).map_err(|e| failed(&e))?;
         let qh = queue.handle();
@@ -107,6 +118,8 @@ impl State {
             .poll_fd()
             .try_clone_to_owned()
             .map_err(|e| failed(&e))?;
+        self.views_opened += 1;
+        let id = self.views_opened;
         self.loop_handle
             .insert_source(
                 Generic::new(fd, Interest::READ, Mode::Level),
@@ -123,12 +136,18 @@ impl State {
                             state.close_view(&why);
                             Ok(PostAction::Remove)
                         }
+                        // Its view is closed: dropping this lets the connection go,
+                        // and the desktop takes the window away.
+                        None if state.view.as_ref().map(|v| v.id) != Some(id) => {
+                            Ok(PostAction::Remove)
+                        }
                         None => Ok(PostAction::Continue),
                     }
                 },
             )
             .map_err(|e| failed(&e))?;
         self.view = Some(View {
+            id,
             connection,
             qh,
             surface,
@@ -185,16 +204,20 @@ impl State {
         view.surface.commit();
     }
 
-    /// Sends the desktop what the view asked of it.
+    /// Sends the desktop what the view asked of it. What doesn't fit in the
+    /// socket now goes on the next try.
     pub fn flush_view(&mut self) {
-        if let Some(view) = &self.view
-            && let Err(e) = view.connection.flush()
-        {
-            self.close_view(&e.to_string());
+        let Some(view) = &self.view else { return };
+        match view.connection.flush() {
+            Err(WaylandError::Io(e)) if e.kind() != io::ErrorKind::WouldBlock => {
+                self.close_view(&e.to_string());
+            }
+            Err(e @ WaylandError::Protocol(_)) => self.close_view(&e.to_string()),
+            _ => {}
         }
     }
 
-    /// Forgets the view: its connection broke, so the desktop dropped it.
+    /// Forgets the view: its connection broke, or the user closed it.
     fn close_view(&mut self, why: &str) {
         if self.view.take().is_some() {
             eprintln!("hypr-computer-screen: the live view closed: {why}");
@@ -256,6 +279,22 @@ impl Dispatch<xdg_surface::XdgSurface, ()> for State {
     }
 }
 
+impl Dispatch<xdg_toplevel::XdgToplevel, ()> for State {
+    fn event(
+        state: &mut Self,
+        _: &xdg_toplevel::XdgToplevel,
+        event: xdg_toplevel::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        // The user closed it; `hypr-computer watch` opens it again.
+        if let xdg_toplevel::Event::Close = event {
+            state.close_view("the user closed it");
+        }
+    }
+}
+
 impl Dispatch<wl_callback::WlCallback, ()> for State {
     fn event(
         state: &mut Self,
@@ -291,6 +330,63 @@ impl Dispatch<wl_buffer::WlBuffer, usize> for State {
 
 delegate_noop!(State: wl_compositor::WlCompositor);
 delegate_noop!(State: ignore wl_surface::WlSurface);
-delegate_noop!(State: ignore xdg_toplevel::XdgToplevel);
 delegate_noop!(State: ignore wl_shm::WlShm);
 delegate_noop!(State: wl_shm_pool::WlShmPool);
+
+/// Waits, at most [`ANSWER_TIME`], for the desktop at `connection` to answer
+/// a first request.
+fn answers(connection: &Connection) -> Result<(), String> {
+    let mut queue = connection.new_event_queue::<Answered>();
+    let _sync = connection.display().sync(&queue.handle(), ());
+    let mut answered = Answered(false);
+    let end = Instant::now() + ANSWER_TIME;
+    while !answered.0 {
+        connection.flush().map_err(|e| e.to_string())?;
+        if let Some(guard) = queue.prepare_read() {
+            let left = end.saturating_duration_since(Instant::now());
+            let timeout = Timespec::try_from(left).map_err(|e| e.to_string())?;
+            let ready = {
+                let fd = guard.connection_fd();
+                let mut fds = [PollFd::new(&fd, PollFlags::IN)];
+                poll(&mut fds, Some(&timeout))
+            };
+            match ready {
+                Ok(0) => {
+                    return Err(format!(
+                        "the desktop didn't answer within {}s",
+                        ANSWER_TIME.as_secs()
+                    ));
+                }
+                Err(Errno::INTR) => continue,
+                Err(e) => return Err(e.to_string()),
+                Ok(_) => match guard.read() {
+                    Err(WaylandError::Io(e)) if e.kind() == io::ErrorKind::WouldBlock => {}
+                    Err(e) => return Err(e.to_string()),
+                    Ok(_) => {}
+                },
+            }
+        }
+        queue
+            .dispatch_pending(&mut answered)
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Whether the desktop has answered.
+struct Answered(bool);
+
+impl Dispatch<wl_callback::WlCallback, ()> for Answered {
+    fn event(
+        answered: &mut Self,
+        _: &wl_callback::WlCallback,
+        event: wl_callback::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let wl_callback::Event::Done { .. } = event {
+            answered.0 = true;
+        }
+    }
+}

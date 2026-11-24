@@ -5,13 +5,15 @@
 
 mod support;
 
+use std::fs;
+use std::os::unix::net::UnixListener;
 use std::thread;
 use std::time::{Duration, Instant};
 
 use support::app::App;
 use support::desktop::VIEW_APP_ID;
-use support::hyprland::PLACE_VIEWS;
-use support::{Daemon, Desktop, Env, Image, Shim, TIMEOUT};
+use support::hyprland::{Hyprland, PLACE_VIEWS, SIGNATURE};
+use support::{Daemon, Desktop, Env, Image, Shim, TIMEOUT, daemon_bin};
 
 const RED: [u8; 3] = [0xd0, 0x20, 0x20];
 const BLUE: [u8; 3] = [0x20, 0x40, 0xd0];
@@ -136,4 +138,28 @@ fn off_hyprland_agents_still_work_and_the_daemon_says_why_there_is_no_view() {
         "session 1: no live view: there is no desktop to show it on: WAYLAND_DISPLAY isn't set",
     );
     assert_eq!(shim.screenshot().width, 1280);
+}
+
+#[test]
+fn a_desktop_that_never_answers_costs_the_agent_nothing() {
+    let env = Env::new();
+    let dir = env.path("stuck");
+    fs::create_dir(&dir).unwrap();
+    // Takes connections and never reads them, like a desktop that hangs.
+    let _stuck = UnixListener::bind(dir.join("wayland-0")).unwrap();
+    let _hyprland = Hyprland::start(&dir);
+    let mut cmd = env.command(&daemon_bin());
+    cmd.env("WAYLAND_DISPLAY", dir.join("wayland-0"))
+        .env("HYPRLAND_INSTANCE_SIGNATURE", SIGNATURE);
+    let daemon = Daemon::spawn(&env, cmd, "daemon.log");
+    let mut shim = agent(&env);
+
+    let log = daemon.wait_for_log("session 1: no live view");
+    assert!(log.contains("didn't answer within 2s"), "{log}");
+    assert_eq!(shim.screenshot().width, 1280);
+    assert!(
+        !daemon.log().contains("session 1 ended"),
+        "{}",
+        daemon.log()
+    );
 }

@@ -42,6 +42,8 @@ pub struct State {
     pub desktop: Option<PathBuf>,
     /// The live view, once the daemon has opened it.
     pub view: Option<View>,
+    /// How many views were ever opened.
+    pub views_opened: u64,
 
     pub space: Space<Window>,
     pub output: Output,
@@ -130,6 +132,7 @@ impl State {
             started: Instant::now(),
             desktop,
             view: None,
+            views_opened: 0,
             space,
             output,
             windows: Vec::new(),

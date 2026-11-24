@@ -18,7 +18,7 @@ path = "src/compositor/main.rs"
 domain.workspace = true
 png = "0.17.16"
 ports.workspace = true
-rustix = { version = "1.1.6", features = ["fs", "process"] }
+rustix = { version = "1.1.6", features = ["event", "fs", "process"] }
 serde_json.workspace = true
 # Smithay is 0.x and changes its API between releases: pinned, upgraded on purpose.
 smithay = { version = "=0.7.0", default-features = false, features = ["wayland_frontend", "desktop", "renderer_pixman"] }
