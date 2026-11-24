@@ -3,8 +3,8 @@ name: tests-untouched
 # edit them to let itself through. It never runs code from the PR: it only reads the PR's commits with git.
 on:
   pull_request_target:
-    # `edited`: a fixed `Tests-From:` line in the body is checked again without a new push.
-    types: [opened, synchronize, reopened, edited]
+    # The PR body is not needed: the test files are matched by content against the tests/* heads.
+    types: [opened, synchronize, reopened]
 permissions:
   contents: read
 jobs:
@@ -16,7 +16,7 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.base.sha }}
           persist-credentials: false
-      - name: Fetch the PR's commits (data only, never run)
+      - name: Fetch the PR's commits and the tests/* heads (data only, never run)
         env:
           PR: ${{ github.event.pull_request.number }}
         run: git fetch --no-tags origin "+refs/pull/${PR}/head:refs/remotes/pr/head" "+refs/heads/tests/*:refs/remotes/origin/tests/*"
