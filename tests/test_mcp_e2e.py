@@ -1,8 +1,10 @@
 import base64
+import ctypes
 import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 
 import pytest
@@ -181,15 +183,32 @@ def test_open_url_opens_files_only_under_the_listed_folders(tmp_path):
     assert refused[0] and "HYPR_COMPUTER_FILE_URLS" in refused[1]
 
 
+TGKILL = {"x86_64": 234, "aarch64": 131}.get(os.uname().machine)
+
+
+def sigterm_to_a_thread_other_than_main(uv_pid: int) -> None:
+    """kill() lets the kernel pick the thread that gets the signal; this picks one the main thread isn't."""
+    (server_pid,) = [c for t in os.listdir(f"/proc/{uv_pid}/task")
+                     for c in open(f"/proc/{uv_pid}/task/{t}/children").read().split()]
+    tids = [t for t in os.listdir(f"/proc/{server_pid}/task") if t != server_pid]
+    libc = ctypes.CDLL(None, use_errno=True)
+    assert libc.syscall(TGKILL, int(server_pid), int(tids[0]), signal.SIGTERM) == 0, ctypes.get_errno()
+
+
 @needs_uv
-@pytest.mark.parametrize("exit_by", ["closing stdin", "SIGTERM"])
+@pytest.mark.parametrize("exit_by", ["closing stdin", "SIGTERM", "SIGTERM to another thread"])
 def test_the_server_turns_off_the_agent_display_it_started_and_its_live_view_when_it_exits(tmp_path, exit_by):
     d = FakeDesktop(tmp_path)
     try:
         assert not d.call("agent_display", action="start")[0]
         (view,) = d.hypr.processes
         proc = d.session.proc
-        proc.stdin.close() if exit_by == "closing stdin" else proc.terminate()
+        if exit_by == "closing stdin":
+            proc.stdin.close()
+        elif exit_by == "SIGTERM":
+            proc.terminate()
+        else:
+            sigterm_to_a_thread_other_than_main(proc.pid)
         proc.wait(timeout=30)
         view.wait(timeout=5)
     finally:
