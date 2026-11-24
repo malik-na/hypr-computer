@@ -3,7 +3,7 @@
 use std::fmt;
 use std::sync::Arc;
 
-use domain::limits::{Action, Refusal, is_password_manager, normalize_site};
+use domain::limits::{Action, BROWSER, Refusal, is_browser, is_password_manager, normalize_site};
 use ports::{BoxFuture, Png, Screen};
 use serde_json::{Map, Value};
 
@@ -215,8 +215,8 @@ async fn allowed(
             session.allows(Action::Launch {
                 program: text("app"),
             })?;
-            // A password manager started by a program that is allowed, such
-            // as a terminal or a shell, is refused too.
+            // A password manager or a browser started by a program that is
+            // allowed, such as a terminal or a shell, is refused too.
             launched_by_args(args)
         }
         Effect::Open => {
@@ -226,8 +226,9 @@ async fn allowed(
     }
 }
 
-/// Refuses a launch whose arguments name a password manager: each word of
-/// each argument is taken as a program, whose file name counts.
+/// Refuses a launch whose arguments name a password manager or a browser
+/// (which would skip the proxy): each word of each argument is taken as a
+/// program, whose file name counts.
 fn launched_by_args(args: &Map<String, Value>) -> Result<(), Refusal> {
     let words = args
         .get("args")
@@ -241,6 +242,11 @@ fn launched_by_args(args: &Map<String, Value>) -> Result<(), Refusal> {
         if is_password_manager(name) {
             return Err(Refusal::PasswordManager {
                 name: name.to_owned(),
+            });
+        }
+        if is_browser(name) && name != BROWSER {
+            return Err(Refusal::Browser {
+                program: name.to_owned(),
             });
         }
     }
