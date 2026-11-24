@@ -18,8 +18,10 @@ use ports::{BoxFuture, Clock, Desktop, Screen, ScreenProcess, Screens, UserInput
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
-use tools::Admit;
+use tools::{Admit, Call, Refusal};
 use tracing::info;
+
+use crate::log::{ActionLog, SessionLog};
 
 mod pass;
 mod stop_one;
@@ -64,7 +66,7 @@ enum Msg {
 }
 
 /// The answer to a tool call: the screen to run it on, or why not.
-type Admission = Result<Arc<dyn Screen>, String>;
+type Admission = Result<Arc<dyn Screen>, Refusal>;
 
 /// What a screen task saw.
 enum News {
@@ -201,11 +203,13 @@ pub struct Ticket {
 }
 
 impl Ticket {
-    /// What the session's tool calls ask before they run.
-    pub fn gate(&self) -> Gate {
+    /// What the session's tool calls ask before they run, and where they
+    /// are logged.
+    pub fn gate(&self, log: &Arc<ActionLog>) -> Gate {
         Gate {
             id: self.id,
             tx: self.tx.clone(),
+            log: log.session(self.id),
         }
     }
 
@@ -223,30 +227,41 @@ impl Drop for Ticket {
     }
 }
 
-/// Lets one session's tool calls through, as its lifecycle allows.
+/// Lets one session's tool calls through, as its lifecycle allows, and
+/// logs them.
 pub struct Gate {
     id: SessionId,
     tx: mpsc::UnboundedSender<Msg>,
+    log: SessionLog,
 }
 
 impl Gate {
     /// The agent made its first request, saying its name, or "" if it gave
     /// none.
     pub fn introduce(&self, name: String) {
+        self.log.named(&name);
         let _ = self.tx.send(Msg::Introduce(self.id, name));
     }
 }
 
 impl Admit for Gate {
-    fn admit(&self) -> BoxFuture<'_, Admission> {
+    fn admit(&self) -> BoxFuture<'_, Result<Arc<dyn Screen>, String>> {
+        Box::pin(async move { self.admit_call().await.map_err(|refused| refused.why) })
+    }
+
+    fn admit_call(&self) -> BoxFuture<'_, Admission> {
         Box::pin(async move {
             let (reply, answer) = oneshot::channel();
-            let stopped = || "hypr-computer's daemon is stopping.".to_owned();
+            let stopping = || refused("hypr-computer's daemon is stopping.");
             self.tx
                 .send(Msg::ToolCall(self.id, reply))
-                .map_err(|_| stopped())?;
-            answer.await.map_err(|_| stopped())?
+                .map_err(|_| stopping())?;
+            answer.await.map_err(|_| stopping())?
         })
+    }
+
+    fn log(&self, call: &Call<'_>) {
+        self.log.record(call);
     }
 }
 
@@ -321,7 +336,7 @@ impl State {
 
     /// The screen a tool call of session `id` may use, as its lifecycle
     /// allows, or why not.
-    fn serve(&mut self, id: SessionId) -> Result<Arc<dyn ScreenProcess>, String> {
+    fn serve(&mut self, id: SessionId) -> Result<Arc<dyn ScreenProcess>, Refusal> {
         let state = self.sessions.state(id);
         let effect = self
             .sessions
@@ -471,13 +486,22 @@ impl State {
 }
 
 /// Why a tool call isn't served, for the agent.
-fn refusal(state: Option<SessionState>) -> String {
-    match state {
+fn refusal(state: Option<SessionState>) -> Refusal {
+    refused(match state {
         Some(SessionState::Starting | SessionState::Verifying) => {
-            "Your screen is still starting. Call the tool again in a moment.".to_owned()
+            "Your screen is still starting. Call the tool again in a moment."
         }
-        _ => "Your session is ending and its screen is gone. Restart the hypr-computer \
-              MCP server to get a new one."
-            .to_owned(),
+        _ => {
+            "Your session is ending and its screen is gone. Restart the hypr-computer MCP \
+             server to get a new one."
+        }
+    })
+}
+
+/// A refusal that isn't the user's stop.
+fn refused(why: &str) -> Refusal {
+    Refusal {
+        why: why.to_owned(),
+        stopped: false,
     }
 }

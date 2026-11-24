@@ -15,7 +15,7 @@ use ports::{UserInput, ViewNotice};
 use tokio::sync::oneshot;
 use tracing::info;
 
-use super::stops::STOPPED;
+use super::stops::stopped;
 use super::{Admission, State};
 
 /// What the first call let through after a take-over tells the agent: the
@@ -144,7 +144,7 @@ impl State {
             if stop.is_some_and(|s| s.run != Run::Running)
                 && let Some(reply) = self.sessions.data_mut(id).and_then(|live| live.held.take())
             {
-                let _ = reply.send(Err(STOPPED.to_owned()));
+                let _ = reply.send(Err(stopped()));
             }
             let running = self
                 .takeovers

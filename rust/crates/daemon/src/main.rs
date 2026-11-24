@@ -4,6 +4,7 @@
 
 mod control;
 mod listen;
+mod log;
 mod mcp;
 mod owner;
 mod serve;
@@ -16,6 +17,7 @@ use std::sync::Arc;
 use adapters::SystemClock;
 use domain::paths;
 use listenfd::ListenFd;
+use log::ActionLog;
 use screen::ScreenProcesses;
 use tracing::{Level, info};
 use tracing_subscriber::filter::Targets;
@@ -31,9 +33,11 @@ fn main() -> ExitCode {
         return ExitCode::from(2);
     }
 
+    // rmcp's warnings quote requests and error replies, which hold what
+    // agents type and the URLs they open: the journal mustn't.
     let filter = Targets::new()
         .with_default(Level::INFO)
-        .with_target("rmcp", Level::WARN);
+        .with_target("rmcp", Level::ERROR);
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::fmt::layer()
@@ -46,6 +50,13 @@ fn main() -> ExitCode {
 
     let program = match screen_program() {
         Ok(program) => program,
+        Err(e) => {
+            eprintln!("hypr-computer-daemon: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let log = match action_log() {
+        Ok(log) => Arc::new(log),
         Err(e) => {
             eprintln!("hypr-computer-daemon: {e}");
             return ExitCode::FAILURE;
@@ -102,6 +113,7 @@ fn main() -> ExitCode {
         screens,
         stop,
         desktop,
+        log,
     )) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
@@ -109,6 +121,18 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// The action log. Every action is logged, so without one the daemon
+/// doesn't start.
+fn action_log() -> Result<ActionLog, String> {
+    let state = paths::state_dir(
+        std::env::var_os("XDG_STATE_HOME").as_deref(),
+        std::env::var_os("HOME").as_deref(),
+    )
+    .ok_or("there is nowhere to keep the action log: neither HOME nor XDG_STATE_HOME is set")?;
+    ActionLog::open(state.clone())
+        .map_err(|e| format!("can't make the action log in {}: {e}", state.display()))
 }
 
 /// The screen program: `$HYPR_COMPUTER_SCREEN` if set, otherwise

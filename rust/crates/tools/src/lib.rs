@@ -21,4 +21,6 @@ mod screenshot;
 mod scroll;
 mod r#type;
 
-pub use registry::{Admit, CallError, Content, Registry, ToolOutput, ToolSpec};
+pub use registry::{
+    Admit, Call, CallError, Content, Outcome, Refusal, Registry, ToolOutput, ToolSpec,
+};

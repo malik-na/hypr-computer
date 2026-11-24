@@ -46,4 +46,12 @@ impl Tool for Type {
             })
         })
     }
+
+    /// What was typed may be a password: only its length is kept, of
+    /// every argument, so a misnamed `text` is kept no better.
+    fn logged(&self, args: &Map<String, Value>) -> Map<String, Value> {
+        args.iter()
+            .map(|(name, value)| (name.clone(), args::characters(value)))
+            .collect()
+    }
 }

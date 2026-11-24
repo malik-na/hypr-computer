@@ -2,6 +2,7 @@
 
 use std::fmt;
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use ports::{BoxFuture, Png, Screen};
 use serde_json::{Map, Value};
@@ -32,6 +33,11 @@ pub(crate) trait Tool: Send + Sync {
         screen: &'a dyn Screen,
         args: Map<String, Value>,
     ) -> BoxFuture<'a, Result<ToolOutput, CallError>>;
+    /// The call's arguments as the action log keeps them: anything that can
+    /// hold a secret is replaced by its length. Pure.
+    fn logged(&self, args: &Map<String, Value>) -> Map<String, Value> {
+        args.clone()
+    }
 }
 
 /// What `tools/list` says about a tool.
@@ -43,12 +49,71 @@ pub struct ToolSpec {
     pub input_schema: Map<String, Value>,
 }
 
-/// Lets a session's tool calls through to its screen. The daemon implements
-/// it with the session's lifecycle; the guard asks it before every call.
+/// Lets a session's tool calls through to its screen, and keeps its action
+/// log. The daemon implements it with the session's lifecycle; the guard asks
+/// it before every call and tells it how every call went.
 pub trait Admit: Send + Sync {
     /// The session's screen, if a tool may use it now; otherwise why not, in
     /// words for the agent.
     fn admit(&self) -> BoxFuture<'_, Result<Arc<dyn Screen>, String>>;
+    /// [`Admit::admit`], saying whether a refusal is the user's stop.
+    fn admit_call(&self) -> BoxFuture<'_, Result<Arc<dyn Screen>, Refusal>> {
+        Box::pin(async move {
+            self.admit().await.map_err(|why| Refusal {
+                why,
+                stopped: false,
+            })
+        })
+    }
+    /// A call is over: it goes in the session's action log.
+    fn log(&self, call: &Call<'_>) {
+        let _ = call;
+    }
+}
+
+/// Why a session's call wasn't let through.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Refusal {
+    /// In words for the agent.
+    pub why: String,
+    /// The user stopped the agent.
+    pub stopped: bool,
+}
+
+/// One tool call, as the action log keeps it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Call<'a> {
+    /// When it came in.
+    pub time: SystemTime,
+    /// The tool's name, as the agent gave it.
+    pub tool: &'a str,
+    /// Its arguments as [`Tool::logged`] keeps them; `None` for a tool that
+    /// doesn't exist, whose arguments nothing vouches for.
+    pub arguments: Option<Map<String, Value>>,
+    pub result: Outcome,
+}
+
+/// How a call ended, as the action log says it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Outcome {
+    Ok,
+    /// The tool failed, or the call was refused for a reason other than a stop.
+    Error,
+    /// Refused, or ended, by the user's stop.
+    Stopped,
+    /// An unknown tool, or bad arguments.
+    Invalid,
+}
+
+impl Outcome {
+    pub fn word(self) -> &'static str {
+        match self {
+            Outcome::Ok => "ok",
+            Outcome::Error => "error",
+            Outcome::Stopped => "stopped",
+            Outcome::Invalid => "invalid",
+        }
+    }
 }
 
 /// One piece of a tool's result.
@@ -128,31 +193,82 @@ impl Registry {
     /// belong in this function, not in the tools. A call the session doesn't
     /// let through gets a failed result that says why, and the tool never runs.
     /// One stopped on the way gets what [`Screen::end_call`] says instead of
-    /// its result; otherwise [`Screen::note`] is added to it.
+    /// its result; otherwise [`Screen::note`] is added to it. Every call,
+    /// whatever became of it, goes in the session's action log before the
+    /// agent has its answer; one whose agent went away before it ended, as an
+    /// error.
     pub async fn call(
         &self,
         session: &dyn Admit,
         name: &str,
         args: Map<String, Value>,
     ) -> Result<ToolOutput, CallError> {
-        let tool = self
-            .tools
-            .iter()
-            .find(|t| t.spec().name == name)
-            .ok_or_else(|| CallError::UnknownTool(name.to_owned()))?;
-        let screen = match session.admit().await {
-            Ok(screen) => screen,
-            Err(why) => return Ok(ToolOutput::error(why)),
+        let tool = self.tools.iter().find(|t| t.spec().name == name);
+        let mut record = Record {
+            session,
+            call: Call {
+                time: SystemTime::now(),
+                tool: name,
+                arguments: tool.map(|t| t.logged(&args)),
+                result: Outcome::Error,
+            },
         };
-        let output = tool.call(screen.as_ref(), args).await;
-        match screen.end_call().await {
-            Some(why) => Ok(ToolOutput::error(why)),
-            None => output.map(|mut output| {
-                output.content.extend(screen.note().map(Content::Text));
-                output
-            }),
-        }
+        let (answer, result) = match tool {
+            Some(tool) => run(*tool, session, args).await,
+            None => (
+                Err(CallError::UnknownTool(name.to_owned())),
+                Outcome::Invalid,
+            ),
+        };
+        record.call.result = result;
+        answer
     }
+}
+
+/// A call's record: logged when the call ends, or when it is dropped
+/// unfinished.
+struct Record<'a> {
+    session: &'a dyn Admit,
+    call: Call<'a>,
+}
+
+impl Drop for Record<'_> {
+    fn drop(&mut self) {
+        self.session.log(&self.call);
+    }
+}
+
+/// Runs `tool` if `session` lets it, and says how that went.
+async fn run(
+    tool: &dyn Tool,
+    session: &dyn Admit,
+    args: Map<String, Value>,
+) -> (Result<ToolOutput, CallError>, Outcome) {
+    let screen = match session.admit_call().await {
+        Ok(screen) => screen,
+        Err(refused) => {
+            let result = if refused.stopped {
+                Outcome::Stopped
+            } else {
+                Outcome::Error
+            };
+            return (Ok(ToolOutput::error(refused.why)), result);
+        }
+    };
+    let output = tool.call(screen.as_ref(), args).await;
+    if let Some(why) = screen.end_call().await {
+        return (Ok(ToolOutput::error(why)), Outcome::Stopped);
+    }
+    let output = output.map(|mut output| {
+        output.content.extend(screen.note().map(Content::Text));
+        output
+    });
+    let result = match &output {
+        Ok(output) if output.is_error => Outcome::Error,
+        Ok(_) => Outcome::Ok,
+        Err(_) => Outcome::Invalid,
+    };
+    (output, result)
 }
 
 #[cfg(test)]
