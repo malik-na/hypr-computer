@@ -174,13 +174,37 @@ def test_open_url_on_the_agent_display_uses_a_browser_of_its_own_and_waits_for_t
     assert out.startswith("opened https://example.com on the agent display") and time.monotonic() - t < 2
     profile = os.path.join(apps.hypr.root, "hypr-computer-browser")
     (cmd,) = apps.hypr.dispatched("exec_cmd")
-    assert f"chromium --force-renderer-accessibility --user-data-dir={profile} --no-first-run" in cmd
+    assert "chromium --force-renderer-accessibility " in cmd and f" --user-data-dir={profile} " in cmd
     assert " --disable-extensions " in cmd  # an extension installed for every profile opened a sign-in page
     assert cmd.endswith(" https://example.com\"" + SILENTLY_THERE)
     monkeypatch.setenv("HYPR_COMPUTER_BROWSER", "chromium --user-data-dir=/tmp/mine")
     apps.call("open_url", url="https://example.com", wait_ms=0, screenshot=False)
     assert "hypr-computer-browser" not in apps.hypr.dispatched("exec_cmd")[1]
     assert users_seat(apps) == ((600, 500), USER_FOOT, "eDP-1")
+
+
+def test_a_window_the_agents_running_browser_opens_itself_goes_to_the_agent_display(apps, monkeypatch):
+    monkeypatch.setenv("HYPR_COMPUTER_BROWSER", "chromium")
+    apps.call("agent_display", action="start")
+    apps.call("open_url", url="https://example.com", wait_ms=0, screenshot=False)
+    assert " --class=chromium-hypr-computer " in apps.hypr.dispatched("exec_cmd")[0]
+    # A private window: the new chromium only hands the URL to the running one, which opens the window itself,
+    # so no exec rule places it. It used to open on the user's workspace.
+    incognito = apps.hypr.open_window(client("chromium-hypr-computer", "New Incognito Tab - Chromium", "0xi",
+                                             (0, 0), (1280, 800)))
+    assert incognito["workspace"]["name"] == "hypr-computer" and incognito["monitor"] == 1
+    assert users_seat(apps) == ((600, 500), USER_FOOT, "eDP-1")
+    assert "[ws 9]" not in [line for line in apps.call("list_windows").splitlines() if "Incognito" in line][0]
+
+
+def test_allowing_the_browser_allows_the_agents_own_browser(apps, monkeypatch):
+    apps.call("agent_display", action="start")
+    apps.hypr.clients.append(agent_window("chromium-hypr-computer", "Example Domain - Chromium", "0xc"))
+    allow("chromium")
+    assert apps.call("key", combo="ctrl+l", window="Example Domain").startswith("pressed ctrl+l")
+    allow("foot")
+    with pytest.raises(Exception, match="the user lets agents use only foot"):
+        apps.call("key", combo="ctrl+l", window="Example Domain")
 
 
 def shortcut(mods: str, key: str, window: str = "0xa") -> str:

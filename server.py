@@ -397,6 +397,7 @@ def lua(name: str, *args) -> None:
 
 AGENT = "hypr-computer"  # the agent display: a headless output of this name, showing a workspace of this name
 AGENT_WORKSPACE, PARKED = f"name:{AGENT}", f"special:{AGENT}"  # PARKED keeps its windows while it's off
+AGENT_BROWSER = f"-{AGENT}"  # the class of the agent's browser windows: the browser's own, with this suffix
 AGENT_GAP = 1000  # logical pixels between the agent display and the user's monitors, more than a pointer motion jumps
 AGENT_OFF = 'The agent display is off; start it with agent_display(action="start").'
 WL_MIRROR = "wl-mirror"  # the program that shows the user the agent display: its live view
@@ -443,11 +444,15 @@ def agent_rule(users: list[dict]) -> dict:
 def place_agent_display(users: list[dict]) -> None:
     """Sets the agent display's rules. Its windows, and the ones parked while it's off, may ask to be focused
     (a browser does when it opens a page in a new tab), and Hyprland would take the user's focus and pointer
-    there, so they can't."""
+    there, so they can't. Every window of the agent's browser opens there: one the running browser opens itself,
+    such as a private window, comes from no command Hyprland was told where to put, and would open on the
+    user's workspace."""
     lua("monitor", agent_rule(users))
     lua("workspace_rule", {"workspace": AGENT_WORKSPACE, "monitor": AGENT, "default": True})
     for name, workspace_ in ((AGENT, AGENT_WORKSPACE), (f"{AGENT}-parked", PARKED)):
         lua("window_rule", {"name": name, "match": {"workspace": workspace_}, "focus_on_activate": False})
+    lua("window_rule", {"name": f"{AGENT}-browser", "match": {"class": f"(.+){AGENT_BROWSER}"},
+                        "workspace": AGENT_WORKSPACE + " silent", "focus_on_activate": False})
 
 
 def in_place(users: list[dict], agent: dict) -> dict:
@@ -782,8 +787,9 @@ def with_input(kind: str, fn):
 
 
 def window_target(w: dict) -> Target:
+    """A window as a grant names it: by its class, and the agent's browser also as the browser it is."""
     cls = w.get("class") or ""
-    return f"'{cls}'", (cls.lower(),)
+    return f"'{cls}'", (cls.lower(), cls.lower().removesuffix(AGENT_BROWSER))
 
 
 def on_top(under: list[dict]) -> list[dict]:
@@ -1813,8 +1819,8 @@ def own_profile(cmd: list[str]) -> list[str]:
         return cmd
     exe, path = os.path.basename(cmd[0]), os.path.join(session_env()["XDG_RUNTIME_DIR"], "hypr-computer-browser")
     if any(k in exe for k in CHROMIUM_FAMILY):
-        return [cmd[0], f"--user-data-dir={path}", "--no-first-run", "--no-default-browser-check",
-                "--disable-extensions", *cmd[1:]]
+        return [cmd[0], f"--user-data-dir={path}", f"--class={exe}{AGENT_BROWSER}", "--no-first-run",
+                "--no-default-browser-check", "--disable-extensions", *cmd[1:]]
     if any(k in exe for k in FIREFOX_FAMILY):
         os.makedirs(path, mode=0o700, exist_ok=True)
         return [cmd[0], "--new-instance", "--profile", path, *cmd[1:]]
