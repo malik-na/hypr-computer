@@ -266,3 +266,53 @@ fn a_desktop_that_never_answers_costs_the_agent_nothing() {
         daemon.log()
     );
 }
+
+#[test]
+fn a_fifth_agents_view_is_refused_naming_the_limit_and_its_session_still_works() {
+    let env = Env::new();
+    let mut desktop = Desktop::start(&env);
+    let daemon = Daemon::start_on(&env, &desktop);
+    let _four = agents(&env, 1, 4);
+    let titles: Vec<String> = desktop
+        .wait_for_views(4)
+        .into_iter()
+        .map(|v| v.title)
+        .collect();
+    assert_eq!(
+        titles,
+        [1, 2, 3, 4].map(|n| format!("agent-{n} (session {n})"))
+    );
+
+    let mut fifth = agents(&env, 5, 5).remove(0);
+    daemon.wait_for_log(
+        "session 5: no live view: at most 4 agents are shown at once; \
+         it gets one when another agent's session ends",
+    );
+    assert_eq!(fifth.screenshot().width, 1280);
+    thread::sleep(Duration::from_millis(300));
+    assert_eq!(desktop.views().len(), 4);
+}
+
+#[test]
+fn when_a_shown_agents_session_ends_the_longest_waiting_agent_is_shown() {
+    let env = Env::new();
+    let mut desktop = Desktop::start(&env);
+    let daemon = Daemon::start_on(&env, &desktop);
+    let mut four = agents(&env, 1, 4);
+    desktop.wait_for_views(4);
+    let _waiting = agents(&env, 5, 6);
+    daemon.wait_for_log("session 6: no live view");
+
+    four[1].kill();
+    daemon.wait_for_log("session 2 ended");
+    thread::sleep(Duration::from_millis(300));
+    let titles: Vec<String> = desktop
+        .wait_for_views(4)
+        .into_iter()
+        .map(|v| v.title)
+        .collect();
+    assert_eq!(
+        titles,
+        [1, 3, 4, 5].map(|n| format!("agent-{n} (session {n})"))
+    );
+}
