@@ -17,15 +17,18 @@ pub fn desktop(wayland_socket: Option<&Path>, hyprland: Option<&OsStr>) -> Arc<d
             "there is no desktop to show it on: WAYLAND_DISPLAY isn't set".to_owned(),
         ));
     };
-    match hyprland
-        .filter(|s| !s.is_empty())
-        .and_then(|signature| Hyprland::new(socket, signature))
-    {
-        Some(hyprland) => Arc::new(hyprland),
-        None => Arc::new(Unsupported(
+    let Some(signature) = hyprland.filter(|s| !s.is_empty()) else {
+        return Arc::new(Unsupported(
             "live views need Hyprland for now, and HYPRLAND_INSTANCE_SIGNATURE isn't set"
                 .to_owned(),
-        )),
+        ));
+    };
+    match Hyprland::new(socket, signature) {
+        Some(hyprland) => Arc::new(hyprland),
+        None => Arc::new(Unsupported(format!(
+            "can't find Hyprland's sockets: WAYLAND_DISPLAY is {}, which is in no directory",
+            socket.display()
+        ))),
     }
 }
 
