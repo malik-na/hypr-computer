@@ -48,12 +48,15 @@
 //! nothing over. With no `<agent>` it exits 2, as any usage error.
 //!
 //! **The clipboard.** Each agent's screen has a clipboard of its own. During
-//! a take-over it is joined with the user's: what the user copied on their
-//! desktop can be pasted on the agent's screen, and what is copied on the
+//! a take-over it is joined with the user's: when the take-over starts the
+//! screen gets the user's clipboard, what the user copies on their desktop
+//! then can be pasted on the agent's screen, and what is copied on the
 //! agent's screen can be pasted on the desktop. Outside a take-over they are
-//! apart: an app on the agent's screen never gets what the user copied,
-//! before, during or after the take-over, and nothing the agent's apps copy
-//! reaches the user's clipboard.
+//! apart: an app on the agent's screen never gets what the user copied
+//! (before the take-over, or after it, including what they copied during
+//! it), and nothing the agent's apps copy reaches the user's clipboard, not
+//! even when a take-over starts. Handing back, or the session ending, leaves
+//! the user's own clipboard as it was.
 //!
 //! **Ending.** An agent that disconnects during a take-over ends its session
 //! as any other: its view and screen go, and the take-over with them, so
@@ -76,6 +79,8 @@
 
 #[path = "../spec25/probe.rs"]
 pub mod probe;
+
+pub mod clip;
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};

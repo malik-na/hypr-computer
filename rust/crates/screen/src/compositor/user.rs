@@ -195,9 +195,14 @@ impl State {
             ViewNotice::TakenOver => {
                 self.user.has_screen = true;
                 self.show_banner(true);
+                self.join_clipboards();
             }
             ViewNotice::Given => {
-                self.user.has_screen = false;
+                // A hand-back before the user got the screen (they clicked
+                // in during a call) joined nothing, so it parts nothing.
+                if std::mem::replace(&mut self.user.has_screen, false) {
+                    self.part_clipboards();
+                }
                 self.user.handed_back = Some(Instant::now());
                 self.release_user();
                 self.show_banner(false);
@@ -480,10 +485,12 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                 ..
             } => state.pointer_at(surface_x, surface_y),
             wl_pointer::Event::Button {
+                serial,
                 button,
                 state: WEnum::Value(pressed),
                 ..
             } => {
+                state.user_serial(serial);
                 let at = state.user.at;
                 state.user_gave(Raw::Button {
                     code: button,
@@ -518,14 +525,19 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
         _: &QueueHandle<Self>,
     ) {
         match event {
+            wl_keyboard::Event::Enter { serial, .. } => state.user_serial(serial),
             wl_keyboard::Event::Key {
+                serial,
                 key,
                 state: WEnum::Value(pressed),
                 ..
-            } => state.user_gave(Raw::Key {
-                code: key,
-                pressed: pressed == wl_keyboard::KeyState::Pressed,
-            }),
+            } => {
+                state.user_serial(serial);
+                state.user_gave(Raw::Key {
+                    code: key,
+                    pressed: pressed == wl_keyboard::KeyState::Pressed,
+                });
+            }
             wl_keyboard::Event::Leave { .. } => state.user_left(true),
             _ => {}
         }

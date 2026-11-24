@@ -1,16 +1,18 @@
 //! The screen's clipboard, between the apps on it: copy in one, paste in
-//! another. It is the screen's own; nothing on it reaches the user's
-//! clipboard, nor the other way round.
+//! another. It is the screen's own: it is joined with the user's only while
+//! the user has taken the screen over (`share.rs`).
+
+use std::os::fd::OwnedFd;
 
 use smithay::delegate_data_device;
 use smithay::input::Seat;
 use smithay::reexports::wayland_server::Resource;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
-use smithay::wayland::selection::SelectionHandler;
 use smithay::wayland::selection::data_device::{
     ClientDndGrabHandler, DataDeviceHandler, DataDeviceState, ServerDndGrabHandler,
     set_data_device_focus,
 };
+use smithay::wayland::selection::{SelectionHandler, SelectionSource, SelectionTarget};
 
 use crate::state::State;
 
@@ -23,7 +25,32 @@ impl State {
 }
 
 impl SelectionHandler for State {
+    /// The only selection the screen sets itself is the user's clipboard.
     type SelectionUserData = ();
+
+    fn new_selection(
+        &mut self,
+        ty: SelectionTarget,
+        source: Option<SelectionSource>,
+        _: Seat<Self>,
+    ) {
+        if let (SelectionTarget::Clipboard, Some(source)) = (ty, source) {
+            self.copied_on_screen(source.mime_types());
+        }
+    }
+
+    fn send_selection(
+        &mut self,
+        ty: SelectionTarget,
+        mime_type: String,
+        fd: OwnedFd,
+        _: Seat<Self>,
+        _: &(),
+    ) {
+        if ty == SelectionTarget::Clipboard {
+            self.paste_from_user(mime_type, fd);
+        }
+    }
 }
 
 impl DataDeviceHandler for State {

@@ -21,6 +21,7 @@ mod pointer;
 mod reading;
 mod requests;
 mod seat;
+mod share;
 mod state;
 mod user;
 mod view;
