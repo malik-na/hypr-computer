@@ -531,6 +531,23 @@ impl World {
         self.emit(format!("activewindowv2>>{bare}"));
     }
 
+    /// The user clicks the window at `address`: it gets the focus, as
+    /// Hyprland's click to focus gives it, unless a rule says `no_focus`.
+    /// Returns whether it has the focus.
+    pub fn user_clicks(&mut self, address: &str) -> bool {
+        let Some(w) = self.window(address) else {
+            return false;
+        };
+        if w.effects.no_focus {
+            return self.focused.as_deref() == Some(address);
+        }
+        let address = w.address.clone();
+        if self.focused.as_deref() != Some(address.as_str()) {
+            self.set_focus(Some(address));
+        }
+        true
+    }
+
     fn focus_window(&mut self, address: &str) {
         let Some(w) = self.window(address) else {
             self.not_understood

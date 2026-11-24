@@ -128,7 +128,7 @@ impl Registry {
     /// belong in this function, not in the tools. A call the session doesn't
     /// let through gets a failed result that says why, and the tool never runs.
     /// One stopped on the way gets what [`Screen::end_call`] says instead of
-    /// its result.
+    /// its result; otherwise [`Screen::note`] is added to it.
     pub async fn call(
         &self,
         session: &dyn Admit,
@@ -147,7 +147,10 @@ impl Registry {
         let output = tool.call(screen.as_ref(), args).await;
         match screen.end_call().await {
             Some(why) => Ok(ToolOutput::error(why)),
-            None => output,
+            None => output.map(|mut output| {
+                output.content.extend(screen.note().map(Content::Text));
+                output
+            }),
         }
     }
 }

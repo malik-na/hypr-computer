@@ -64,7 +64,7 @@ pub enum Launched {
 }
 
 /// A point on a screen, in pixels from its top-left corner.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Point {
     pub x: u32,
     pub y: u32,
@@ -163,6 +163,11 @@ pub trait Screen: Send + Sync {
     fn end_call(&self) -> BoxFuture<'_, Option<String>> {
         Box::pin(async { None })
     }
+    /// What the agent must be told besides the tool's result, once the call
+    /// has ended: the user took over the screen while it waited.
+    fn note(&self) -> Option<String> {
+        None
+    }
 }
 
 /// Asked before each input a tool call gives its screen: how a stop reaches
@@ -173,6 +178,31 @@ pub trait InputGate: Send + Sync {
     fn ask(&self, holds: bool) -> BoxFuture<'_, bool>;
     /// Everything the call held down is released.
     fn released(&self) -> BoxFuture<'_, ()>;
+}
+
+/// What the user did in a screen's live view, as taking it over cares.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UserInput {
+    /// A pointer button pressed.
+    Click,
+    /// A key pressed.
+    Key { escape: bool },
+    /// Anything else: motion, a release, scroll.
+    Other,
+}
+
+/// What a screen's live view is told by the daemon.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ViewNotice {
+    /// Give the user's oldest input not yet decided to the screen.
+    Forward,
+    /// Drop it.
+    Drop,
+    /// The user has the screen: show the banner.
+    TakenOver,
+    /// The screen is handed back: banner off, the user's held buttons and
+    /// keys released.
+    Given,
 }
 
 /// An agent's screen, as the daemon runs it: the steps of
@@ -189,6 +219,14 @@ pub trait ScreenProcess: Screen {
     /// Opens the screen's live view, a window called `title` on the user's
     /// desktop. It closes when the screen does.
     fn open_view(&self, title: String) -> BoxFuture<'_, Result<(), ScreenError>>;
+    /// The next input the user gave in the live view, in order; `None` once
+    /// the screen can report no more. Each must be answered with
+    /// `ViewNotice::Forward` or `ViewNotice::Drop`, in order.
+    fn user_input(&self) -> BoxFuture<'_, Option<UserInput>> {
+        Box::pin(async { None })
+    }
+    /// Tells the live view `notice`, after every notice told before it.
+    fn tell_view(&self, _notice: ViewNotice) {}
     /// Resolves when the process has exited, for whatever reason.
     fn exited(&self) -> BoxFuture<'_, ()>;
     /// `Screen::act`, asking `gate` before each input. Refused, it releases

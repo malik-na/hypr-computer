@@ -13,6 +13,7 @@ mod process;
 pub mod protocol;
 mod settle;
 mod strays;
+mod user;
 
 pub use process::ScreenProcesses;
 

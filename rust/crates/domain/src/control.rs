@@ -15,6 +15,8 @@ pub enum Command {
     StopOne(String),
     /// Let the agents with this name, or this session number, go on.
     ResumeOne(String),
+    /// Hand back the screen the user took over.
+    Give,
 }
 
 impl Command {
@@ -25,6 +27,7 @@ impl Command {
             Command::Watch => "watch\n".to_owned(),
             Command::Stop => "stop\n".to_owned(),
             Command::Resume => "resume\n".to_owned(),
+            Command::Give => "give\n".to_owned(),
             Command::StopOne(agent) => one("stop", agent),
             Command::ResumeOne(agent) => one("resume", agent),
         }
@@ -38,6 +41,7 @@ impl Command {
             ("watch", "") => Some(Command::Watch),
             ("stop", "") => Some(Command::Stop),
             ("resume", "") => Some(Command::Resume),
+            ("give", "") => Some(Command::Give),
             ("stop", agent) => Some(Command::StopOne(agent.to_owned())),
             ("resume", agent) => Some(Command::ResumeOne(agent.to_owned())),
             _ => None,

@@ -2,8 +2,9 @@
 //! watch the agent. The screen is a client of the desktop's compositor for
 //! this, in the same event loop as everything else.
 //!
-//! Watch-only by construction: the view never binds `wl_seat`, so the user's
-//! pointer and keys have no way to reach the agent's apps.
+//! Watch-only until the user takes over: the view takes the desktop's seat,
+//! but the user's pointer and keys reach the agent's apps only through the
+//! daemon's take-over, in `user.rs`.
 //!
 //! The window is black, at whatever size the desktop gives it, with the
 //! screen in a subsurface scaled to fit, its shape kept. The screen is drawn
@@ -27,19 +28,22 @@ use smithay::reexports::calloop::{Interest, Mode, PostAction};
 use wayland_client::backend::WaylandError;
 use wayland_client::globals::{GlobalListContents, registry_queue_init};
 use wayland_client::protocol::{
-    wl_buffer, wl_callback, wl_compositor, wl_registry, wl_shm, wl_shm_pool, wl_subcompositor,
-    wl_subsurface, wl_surface,
+    wl_buffer, wl_callback, wl_compositor, wl_region, wl_registry, wl_seat, wl_shm, wl_shm_pool,
+    wl_subcompositor, wl_subsurface, wl_surface,
 };
 use wayland_client::{Connection, Dispatch, QueueHandle, delegate_noop};
 use wayland_protocols::wp::viewporter::client::{wp_viewport, wp_viewporter};
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 
+use crate::banner::{Banner, COLOUR};
 use crate::state::{HEIGHT, State, WIDTH};
+use crate::user::ViewSeat;
 
 /// One frame's bytes: the whole screen, four bytes a pixel.
 const FRAME_BYTES: usize = WIDTH as usize * HEIGHT as usize * 4;
-/// The shared memory: two frames, then one black pixel.
-const MEMORY_BYTES: usize = 2 * FRAME_BYTES + 4;
+/// The shared memory: two frames, one black pixel, and one of the banner's
+/// colour.
+const MEMORY_BYTES: usize = 2 * FRAME_BYTES + 8;
 
 /// How long the desktop may take to answer as the view opens. The screen
 /// serves nothing else meanwhile, and the daemon ends a session whose screen
@@ -72,6 +76,11 @@ pub struct View {
     /// The screen's `frame` the view last showed, and the buffer it is in.
     shown: Option<u64>,
     last: Option<usize>,
+    /// Where the screen is in the window, and its size there.
+    pub fit: ((i32, i32), (i32, i32)),
+    /// The desktop's pointer and keyboard, for taking over.
+    pub seat: ViewSeat,
+    pub banner: Banner,
 }
 
 /// A surface whose picture is scaled to the size it is given.
@@ -107,6 +116,8 @@ impl State {
             globals.bind(&qh, 1..=1, ()).map_err(|e| failed(&e))?;
         let shm: wl_shm::WlShm = globals.bind(&qh, 1..=1, ()).map_err(|e| failed(&e))?;
         let wm: xdg_wm_base::XdgWmBase = globals.bind(&qh, 1..=6, ()).map_err(|e| failed(&e))?;
+        // Without a seat the view is only ever watched.
+        let seat: Option<wl_seat::WlSeat> = globals.bind(&qh, 1..=5, ()).ok();
 
         let memory = File::from(
             memfd_create("hypr-computer-view", MemfdFlags::CLOEXEC).map_err(|e| failed(&e))?,
@@ -114,6 +125,9 @@ impl State {
         // A new memfd is all zeros: the black pixel is already there.
         memory
             .set_len(MEMORY_BYTES as u64)
+            .map_err(|e| failed(&e))?;
+        memory
+            .write_all_at(&COLOUR, (2 * FRAME_BYTES + 4) as u64)
             .map_err(|e| failed(&e))?;
         let pool = shm.create_pool(memory.as_fd(), MEMORY_BYTES as i32, &qh, ());
         let black = pool.create_buffer(
@@ -124,6 +138,15 @@ impl State {
             wl_shm::Format::Xrgb8888,
             &qh,
             2,
+        );
+        let colour = pool.create_buffer(
+            (2 * FRAME_BYTES + 4) as i32,
+            1,
+            1,
+            4,
+            wl_shm::Format::Xrgb8888,
+            &qh,
+            3,
         );
         let buffers = [0, 1].map(|i| {
             pool.create_buffer(
@@ -152,6 +175,15 @@ impl State {
             .get_toplevel(&qh, ());
         toplevel.set_title(title.to_owned());
         toplevel.set_app_id(APP_ID.to_owned());
+        let mut banner = Banner::new(
+            &compositor,
+            &subcompositor,
+            &viewporter,
+            &window.surface,
+            colour,
+            &qh,
+        );
+        banner.show(self.user.has_screen);
         window.surface.commit();
 
         let fd = connection
@@ -203,6 +235,9 @@ impl State {
             wanted: false,
             shown: None,
             last: None,
+            fit: fit(WIDTH, HEIGHT),
+            seat: ViewSeat::new(seat),
+            banner,
         });
         self.flush_view();
         Ok(())
@@ -309,6 +344,11 @@ impl Dispatch<xdg_wm_base::XdgWmBase, ()> for State {
 }
 
 impl View {
+    /// Whether `surface` is the picture of the screen.
+    pub fn is_picture(&self, surface: &wl_surface::WlSurface) -> bool {
+        self.picture.surface == *surface
+    }
+
     /// Lays the window out at the size the desktop asked for: black, with
     /// the screen as large as fits in the middle.
     fn lay_out(&mut self) {
@@ -316,7 +356,9 @@ impl View {
             (w, h) if w > 0 && h > 0 => (w, h),
             _ => (WIDTH, HEIGHT),
         };
-        let ((x, y), (fit_width, fit_height)) = fit(width, height);
+        self.fit = fit(width, height);
+        self.banner.lay_out(self.fit);
+        let ((x, y), (fit_width, fit_height)) = self.fit;
         self.picture.viewport.set_destination(fit_width, fit_height);
         // Hyprland (0.57.2) applies a new viewport size only with a buffer,
         // so the frame on show goes up again with it.
@@ -419,7 +461,7 @@ impl Dispatch<wl_buffer::WlBuffer, usize> for State {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        // Index 2 is the black pixel, which is never redrawn.
+        // Index 2 is the black pixel and 3 the banner's, which are never redrawn.
         if let wl_buffer::Event::Release = event
             && let Some(busy) = state.view.as_mut().and_then(|v| v.busy.get_mut(*index))
         {
@@ -437,6 +479,7 @@ delegate_noop!(State: wp_viewport::WpViewport);
 delegate_noop!(State: ignore wl_surface::WlSurface);
 delegate_noop!(State: ignore wl_shm::WlShm);
 delegate_noop!(State: wl_shm_pool::WlShmPool);
+delegate_noop!(State: wl_region::WlRegion);
 
 /// Waits, at most [`ANSWER_TIME`], for the desktop at `connection` to answer
 /// a first request.

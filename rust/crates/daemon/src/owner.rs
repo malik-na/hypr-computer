@@ -12,8 +12,9 @@ use std::sync::Arc;
 use domain::control::Reply;
 use domain::lifecycle::{Effect, Event, SessionState};
 use domain::stop::{self, Stops};
+use domain::takeover::TakeOvers;
 use domain::{EndReason, SessionId, Sessions};
-use ports::{BoxFuture, Clock, Desktop, Screen, ScreenProcess, Screens};
+use ports::{BoxFuture, Clock, Desktop, Screen, ScreenProcess, Screens, UserInput};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -23,6 +24,7 @@ use tracing::info;
 mod pass;
 mod stop_one;
 mod stops;
+mod takeover;
 mod views;
 
 enum Msg {
@@ -51,6 +53,10 @@ enum Msg {
     StopOne(String, oneshot::Sender<Reply>),
     /// `hypr-computer resume <agent>`.
     ResumeOne(String, oneshot::Sender<Reply>),
+    /// The user gave an input in a session's live view.
+    User(SessionId, UserInput),
+    /// `hypr-computer give`.
+    Give(oneshot::Sender<Reply>),
     Stop,
 }
 
@@ -84,6 +90,10 @@ struct Live {
     waiting: VecDeque<oneshot::Sender<Admission>>,
     /// How many of its tool calls were let through: the last one's number.
     calls: u64,
+    /// Its tool call that waits while the user has its screen.
+    held: Option<oneshot::Sender<Admission>>,
+    /// The user took its screen over since its last call was let through.
+    taken_over: bool,
 }
 
 /// A handle to the owner. Cheap to clone.
@@ -109,6 +119,7 @@ impl Owner {
             tx: tx.clone(),
             stops: Stops::new(),
             stop_waiters: Vec::new(),
+            takeovers: TakeOvers::new(),
         };
         (Owner { tx }, tokio::spawn(run(rx, state)))
     }
@@ -152,6 +163,12 @@ impl Owner {
     /// `hypr-computer resume <agent>`. `None` only if the owner has stopped.
     pub async fn resume_one(&self, agent: String) -> Option<Reply> {
         self.ask(|reply| Msg::ResumeOne(agent, reply)).await
+    }
+
+    /// `hypr-computer give`: hands back the screen the user took over.
+    /// `None` only if the owner has stopped.
+    pub async fn give(&self) -> Option<Reply> {
+        self.ask(Msg::Give).await
     }
 
     async fn ask(&self, msg: impl FnOnce(oneshot::Sender<Reply>) -> Msg) -> Option<Reply> {
@@ -235,6 +252,8 @@ struct State {
     stops: Stops<SessionId>,
     /// `hypr-computer stop`s waiting for inputs in progress to be released.
     stop_waiters: Vec<stops::Waiter>,
+    /// Which screen the user has taken over, and the calls that wait for it.
+    takeovers: TakeOvers<SessionId>,
 }
 
 async fn run(mut rx: mpsc::UnboundedReceiver<Msg>, mut state: State) {
@@ -255,6 +274,8 @@ async fn run(mut rx: mpsc::UnboundedReceiver<Msg>, mut state: State) {
             Msg::ResumeAll(reply) => state.resume_all(reply),
             Msg::StopOne(agent, reply) => state.stop_one(&agent, reply),
             Msg::ResumeOne(agent, reply) => state.resume_one(&agent, reply),
+            Msg::User(id, input) => state.user_input(id, input),
+            Msg::Give(reply) => state.give(reply),
             Msg::Stop => stopping = true,
         }
         if stopping && state.sessions.open_count() == 0 {
@@ -273,10 +294,13 @@ impl State {
             view: views::View::default(),
             waiting: VecDeque::new(),
             calls: 0,
+            held: None,
+            taken_over: false,
         };
         let (id, effect) = self.sessions.connect(self.clock.now(), live);
         info!("{id} started; {} open", self.sessions.open_count());
         self.stop_connect(id);
+        self.takeover_connect(id);
         let left = reply.send(id).is_err();
         self.act(id, effect);
         if left {
@@ -307,10 +331,14 @@ impl State {
         match news {
             News::Started => self.event(id, Event::ScreenStarted, None),
             News::Ready => {
-                if self.sessions.state(id) == Some(SessionState::Verifying) {
+                let first = self.sessions.state(id) == Some(SessionState::Verifying);
+                if first {
                     info!("{id}: screen ready");
                 }
                 self.event(id, Event::ScreenReady, None);
+                if first {
+                    self.watch_user(id);
+                }
                 self.open_view(id);
             }
             News::Failed(why) => {
@@ -333,7 +361,7 @@ impl State {
             // Effect::CloseConnection: harmless if the agent already disconnected.
             gone.data.connection.cancel();
             let reason = gone.data.ending.unwrap_or(EndReason::Disconnected);
-            for waiting in gone.data.waiting {
+            for waiting in gone.data.waiting.into_iter().chain(gone.data.held) {
                 let _ = waiting.send(Err(refusal(None)));
             }
             info!(
@@ -342,6 +370,7 @@ impl State {
                 self.sessions.open_count()
             );
             self.stop_disconnect(id);
+            self.takeover_disconnect(id);
             self.show_waiting();
             return;
         }
@@ -413,6 +442,12 @@ impl State {
             // closed when the session is gone, in `event`.
             _ => {}
         }
+    }
+
+    fn screen(&mut self, id: SessionId) -> Option<Arc<dyn ScreenProcess>> {
+        self.sessions
+            .data_mut(id)
+            .and_then(|live| live.screen.clone())
     }
 
     /// Runs `task` and sends the owner what it saw. If the owner has

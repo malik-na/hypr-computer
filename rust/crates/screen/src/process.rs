@@ -6,13 +6,13 @@ use std::io;
 use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use domain::SessionId;
 use ports::{
     Action, AppCommand, BoxFuture, InputGate, Launched, OpenedPage, Png, Screen, ScreenError,
-    ScreenProcess, Screens, WebPage,
+    ScreenProcess, Screens, UserInput, ViewNotice, WebPage,
 };
 use rustix::process::{Pid, Signal, kill_process_group, test_kill_process_group};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
@@ -23,8 +23,9 @@ use tracing::warn;
 
 use crate::SIZE;
 use crate::browser::Browser;
-use crate::protocol::{READY, Reply, Request, Status};
+use crate::protocol::{READY, Reply, Request, Status, USER_SOCKET};
 use crate::settle::parts;
+use crate::user::UserLink;
 
 /// How long a screen may take to say it is up.
 const START_TIME: Duration = Duration::from_secs(10);
@@ -111,6 +112,8 @@ impl Screens for ScreenProcesses {
             exited,
             browser_program: self.browser.clone(),
             browser: Mutex::new(None),
+            has_view: self.desktop.is_some(),
+            user: OnceLock::new(),
         }))
     }
 }
@@ -139,6 +142,10 @@ pub(crate) struct ScreenChild {
     pub(crate) browser_program: Option<PathBuf>,
     /// The browser, once a page was opened.
     pub(crate) browser: Mutex<Option<Browser>>,
+    /// Whether it may open a live view: it has a desktop.
+    has_view: bool,
+    /// The user's input in the live view, from when the screen is up.
+    user: OnceLock<UserLink>,
 }
 
 pub(crate) struct Pipe {
@@ -212,6 +219,22 @@ impl ScreenChild {
     /// The runtime dir apps on the screen get in place of the user's.
     pub(crate) fn app_runtime_dir(&self) -> PathBuf {
         self.dir.join("run")
+    }
+
+    /// Connects to the screen's user socket, if it has a view. Before any
+    /// app starts, so none can connect in the daemon's place: a screen still
+    /// listening there would let an app pose as the daemon, so failing to
+    /// connect fails the screen.
+    async fn link_user(&self) -> Result<(), ScreenError> {
+        if !self.has_view {
+            return Ok(());
+        }
+        let path = self.dir.join(USER_SOCKET);
+        let link = UserLink::connect(&path)
+            .await
+            .map_err(|e| ScreenError(format!("can't connect to {}: {e}", path.display())))?;
+        let _ = self.user.set(link);
+        Ok(())
     }
 
     pub(crate) async fn status(&self) -> Result<Status, ScreenError> {
@@ -360,7 +383,10 @@ impl ScreenProcess for ScreenChild {
                 return Err(ScreenError("the screen stopped answering".to_owned()));
             };
             let broke = match timeout(START_TIME, open.read_line()).await {
-                Ok(Ok(line)) if line.trim_end() == READY => return Ok(()),
+                Ok(Ok(line)) if line.trim_end() == READY => match self.link_user().await {
+                    Ok(()) => return Ok(()),
+                    Err(e) => e,
+                },
                 Ok(Ok(line)) => ScreenError(format!(
                     "the screen said {:?} instead of {READY:?}",
                     line.trim_end()
@@ -410,6 +436,21 @@ impl ScreenProcess for ScreenChild {
         gate: &'a dyn InputGate,
     ) -> BoxFuture<'a, Result<(), ScreenError>> {
         Box::pin(self.act_and_settle(action, gate))
+    }
+
+    fn user_input(&self) -> BoxFuture<'_, Option<UserInput>> {
+        Box::pin(async move {
+            match self.user.get() {
+                Some(link) => link.next().await,
+                None => None,
+            }
+        })
+    }
+
+    fn tell_view(&self, notice: ViewNotice) {
+        if let Some(link) = self.user.get() {
+            link.tell(notice);
+        }
     }
 
     fn exited(&self) -> BoxFuture<'_, ()> {
