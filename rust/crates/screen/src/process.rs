@@ -11,8 +11,8 @@ use std::time::Duration;
 
 use domain::SessionId;
 use ports::{
-    Action, AppCommand, BoxFuture, InputGate, Launched, Png, Screen, ScreenError, ScreenProcess,
-    Screens,
+    Action, AppCommand, BoxFuture, InputGate, Launched, OpenedPage, Png, Screen, ScreenError,
+    ScreenProcess, Screens, WebPage,
 };
 use rustix::process::{Pid, Signal, kill_process_group, test_kill_process_group};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
@@ -22,6 +22,7 @@ use tokio::time::timeout;
 use tracing::warn;
 
 use crate::SIZE;
+use crate::browser::Browser;
 use crate::protocol::{READY, Reply, Request, Status};
 use crate::settle::parts;
 
@@ -37,19 +38,28 @@ const SOCKET: &str = "wayland";
 /// Starts screens as `hypr-computer-screen` processes, each with its files in
 /// a directory of its own, `<dir>/screen-<session number>/`, and its live
 /// view on the user's desktop, the Wayland socket `desktop`, if there is one.
+/// Their browser is `browser`, or else the first Chromium-family browser on
+/// `PATH`.
 #[derive(Debug)]
 pub struct ScreenProcesses {
     program: PathBuf,
     dir: PathBuf,
     desktop: Option<PathBuf>,
+    browser: Option<PathBuf>,
 }
 
 impl ScreenProcesses {
-    pub fn new(program: PathBuf, dir: PathBuf, desktop: Option<PathBuf>) -> Self {
+    pub fn new(
+        program: PathBuf,
+        dir: PathBuf,
+        desktop: Option<PathBuf>,
+        browser: Option<PathBuf>,
+    ) -> Self {
         Self {
             program,
             dir,
             desktop,
+            browser,
         }
     }
 }
@@ -99,6 +109,8 @@ impl Screens for ScreenProcesses {
                 stdout: BufReader::new(stdout),
             })),
             exited,
+            browser_program: self.browser.clone(),
+            browser: Mutex::new(None),
         }))
     }
 }
@@ -123,6 +135,10 @@ pub(crate) struct ScreenChild {
     /// pipe may be out of step, so nothing more is asked of it.
     pipe: Mutex<Option<Pipe>>,
     exited: watch::Receiver<bool>,
+    /// The browser to start, if the daemon was told one.
+    pub(crate) browser_program: Option<PathBuf>,
+    /// The browser, once a page was opened.
+    pub(crate) browser: Mutex<Option<Browser>>,
 }
 
 pub(crate) struct Pipe {
@@ -261,6 +277,14 @@ impl ScreenChild {
         self.settle(&mut pipe, since).await
     }
 
+    /// Waits until what the apps are drawing now is on the screen, so the
+    /// next screenshot shows it.
+    pub(crate) async fn settled(&self) -> Result<(), ScreenError> {
+        let mut pipe = self.pipe.lock().await;
+        let since = self.status_on(&mut pipe).await?.commits;
+        self.settle(&mut pipe, since).await
+    }
+
     async fn ask_on(
         &self,
         pipe: &mut Option<Pipe>,
@@ -317,6 +341,10 @@ impl Screen for ScreenChild {
 
     fn launch(&self, app: AppCommand) -> BoxFuture<'_, Result<Launched, ScreenError>> {
         Box::pin(self.start_app(app))
+    }
+
+    fn open_page(&self, page: WebPage) -> BoxFuture<'_, Result<OpenedPage, ScreenError>> {
+        Box::pin(self.open_web_page(page))
     }
 }
 

@@ -5,6 +5,7 @@
 //! Hyprland's, the portals') lead to the user's desktop.
 
 use std::collections::VecDeque;
+use std::ffi::OsStr;
 use std::fs::DirBuilder;
 use std::io;
 use std::os::unix::fs::DirBuilderExt;
@@ -41,16 +42,27 @@ const USERS_SESSION: &[&str] = &[
 
 impl ScreenChild {
     pub(crate) async fn start_app(&self, app: AppCommand) -> Result<Launched, ScreenError> {
-        let before = self.status().await?.windows;
+        let command = self.app_command(&app.program, &app.args)?;
+        self.run_app(command).await
+    }
+
+    /// A command that starts `program` as an app on this screen, with this
+    /// screen as its display and nothing of the user's session.
+    pub(crate) fn app_command(
+        &self,
+        program: impl AsRef<OsStr>,
+        args: &[String],
+    ) -> Result<Command, ScreenError> {
         let runtime = self.app_runtime_dir();
-        let cant = |e: io::Error| ScreenError(e.to_string());
         match DirBuilder::new().mode(0o700).create(&runtime) {
-            Err(e) if e.kind() != io::ErrorKind::AlreadyExists => return Err(cant(e)),
+            Err(e) if e.kind() != io::ErrorKind::AlreadyExists => {
+                return Err(ScreenError(e.to_string()));
+            }
             _ => {}
         }
-        let mut command = Command::new(&app.program);
+        let mut command = Command::new(program);
         command
-            .args(&app.args)
+            .args(args)
             .env("WAYLAND_DISPLAY", self.socket())
             .env("XDG_RUNTIME_DIR", &runtime)
             .stdin(Stdio::null())
@@ -60,7 +72,16 @@ impl ScreenChild {
         for name in USERS_SESSION {
             command.env_remove(name);
         }
-        let mut child = command.spawn().map_err(cant)?;
+        Ok(command)
+    }
+
+    /// Starts `command`, made by [`Self::app_command`], and waits a while for
+    /// its window.
+    pub(crate) async fn run_app(&self, mut command: Command) -> Result<Launched, ScreenError> {
+        let before = self.status().await?.windows;
+        let mut child = command.spawn().map_err(|e| ScreenError(e.to_string()))?;
+        // The command holds the parent's copies of what it hands the app.
+        drop(command);
         let Some(pid) = child.id() else {
             return Err(ScreenError("it vanished as it started".to_owned()));
         };

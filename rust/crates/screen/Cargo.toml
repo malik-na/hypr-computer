@@ -15,6 +15,7 @@ name = "hypr-computer-screen"
 path = "src/compositor/main.rs"
 
 [dependencies]
+command-fds = { version = "0.3.3", features = ["tokio"] }
 domain.workspace = true
 png = "0.17.16"
 ports.workspace = true
