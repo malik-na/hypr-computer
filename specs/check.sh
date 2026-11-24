@@ -145,6 +145,11 @@ expect_liveness  TakeOver         AdmitWhileTaking             TakeOverTakesEffe
 expect_invariant TakeOver         EscapeForgetsWaitingCall     WaitingOnlyWhileTakenOver
 expect_invariant TakeOver         ClipboardKeptOnHandBack      ClipboardOnlyDuringTakeOver
 expect_invariant TakeOver         EndKeepsTakeOver             EndedSessionLeavesNothing
+expect_pass      Profiles
+expect_invariant Profiles         TwoSessionsBothAcquire       OneBrowserPerProfile
+expect_invariant Profiles         ReleaseAtDisconnect          OneBrowserPerProfile
+expect_invariant Profiles         LockNotHeldByBrowser         NoBrowserOnDeletedProfile
+expect_invariant Profiles         DeleteInUse                  NoBrowserOnDeletedProfile
 
 heading "Summary"
 printf '%s' "$summary"

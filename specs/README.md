@@ -233,3 +233,67 @@ Events the spec doesn't allow in a state, and events for a session that is gone,
 - **The user's input itself.** The model has no step for it: the user's input reaches the screen exactly while `control` is `"User"`. The Rust state machine says so with `Effect::Forward`. A button or key the user still holds when they hand back is released by the hand-back.
 - **Which Escapes count.** Escape twice is one step here. In Rust the first Escape goes to the screen and the second hands back; any other key or click between them starts the count again.
 - **Time.** A call may wait as long as the user keeps the screen; an agent's client may give up on it, which is a disconnect or nothing.
+
+## Profiles
+
+`Profiles.tla` models saved, named browser profiles (#33) and the lock that keeps each one to a single session at a time. The user makes a profile with `hypr-computer profile new <name>` and removes it with `hypr-computer profile delete <name>`. An agent uses one by naming it: `open_url {url, profile}`. Without `profile` a session's browser starts fresh, as before. A session's first `open_url` fixes its profile, named or fresh, until the session ends.
+
+The lock matters because Chromium allows one browser per profile folder. A second Chromium started on a folder in use doesn't open a window of its own: it hands its URL to the first one and exits. Without the lock, a second agent's page would open on the first agent's screen, signed in as the first agent.
+
+Two locks keep a profile to one browser. The daemon's table (`holder`) says which session has which profile, and gives the agent a clear refusal. A lock of the operating system's on the profile is held by the session and by the browser it starts, so the kernel frees it only when the last of them is gone. It covers what the table can't see: a browser left running by a daemon that died, and `hypr-computer profile delete` run while no daemon is.
+
+### Properties
+
+| Property | In plain words |
+| --- | --- |
+| `OneBrowserPerProfile` | At most one browser runs on a profile, counting a dead daemon's browsers that haven't exited yet |
+| `NoBrowserOnDeletedProfile` | No browser runs on a profile the user deleted |
+| `BrowserOnItsOwnProfile` | A session's browser runs on the session's own profile |
+| `HolderChoseIt` | The table gives a profile only to a live session that chose it |
+| `OneProfilePerSession` | A session's profile, once fixed, stays until the session ends; only a refused lock unsets it |
+| `ProfilesStayUntilDeleted` | A profile goes only when the user deletes it: not when a session ends, nor when the daemon restarts |
+| `SessionsAreIndependent` | A step of one session never changes another; only a daemon restart changes several |
+| `EndedSessionReleases` | A session that ended releases its profile |
+| `OpenAnswers` | Taking a profile's lock always comes to an answer |
+| `OrphanedProfileFreed` | A profile a dead daemon's browser was on becomes free again |
+
+The last three hold under the assumptions in `Fairness`: taking a lock ends, the daemon closes an ending session's browser (killing it if it won't close) and then finishes its teardown, and a browser whose screen is gone exits. Nothing is assumed about agents and the user, and the daemon may die at any moment.
+
+### The bugs it catches
+
+These are plausible bugs, not past ones: the feature is new.
+
+| Config | The bug | Property it violates |
+| --- | --- | --- |
+| `TwoSessionsBothAcquire.cfg` | The table is checked when the call arrives but written only after an await, once the lock is taken. Two agents that ask at once both find the profile free. | `OneBrowserPerProfile` |
+| `ReleaseAtDisconnect.cfg` | The profile is released as soon as the agent's connection closes, while its browser is still shutting down (writing its cookies). The next session's browser starts on the same folder. | `OneBrowserPerProfile` |
+| `LockNotHeldByBrowser.cfg` | The lock lives only in the daemon. When the daemon dies its browser runs on, unlocked, and `hypr-computer profile delete` removes the folder from under it. (The next daemon would also start a second browser on it, a longer run.) | `NoBrowserOnDeletedProfile` |
+| `DeleteInUse.cfg` | `hypr-computer profile delete` removes a profile a browser is using. The browser writes some files back, and the "deleted" logins come back half-made. | `NoBrowserOnDeletedProfile` |
+
+TLC's counterexample for `ReleaseAtDisconnect`: agent 1 opens a page in profile `p1` (`Open`, `Acquired`) and disconnects; the table frees `p1` at once (`Disconnect`), agent 2 asks for it (`Open`, `Acquired`), and both sessions' browsers run on `p1`.
+
+### Rust names
+
+The Rust state machine is `domain::profiles::Profiles<K>`, keyed by session id, with one pure `step(&mut self, Event<K>) -> Vec<Effect<K>>`; the top of `rust/crates/domain/tests/profiles.rs` documents it in full, with `ProfileName`, the rule for a profile's name. It holds `uses` (`Uses`, with `acquiring` as `Uses::Acquiring`) and `holder`. `browser`, `orphan` and `exists` are the world: the caller looks on disk for `exists` and passes it in.
+
+| Action in the spec | Rust event | Effect |
+| --- | --- | --- |
+| `Connect`, `Disconnect` | `Event::Connect`, `Event::Disconnect`, at the lifecycle's | none |
+| `OpenNoProfile` | `Event::Open` with no profile, or the session's own | `Effect::Browse` |
+| `Open` | `Event::Open` with a profile, the session's first | `Effect::Acquire`: take the OS lock; or `Effect::Refuse` (missing, in use, or the session's profile is another) |
+| `Acquired` | `Event::Acquired`: the OS lock is taken | `Effect::Browse` |
+| `Busy` | `Event::Busy`: the OS lock is held outside the table | `Effect::Refuse` (in use) |
+| `BrowserCloses`, `BrowserStopped` | none: the world | |
+| `TeardownDone` | `Event::TeardownDone`, at the lifecycle's, after the browser is seen gone | `Effect::Release`: drop the OS lock |
+| `Create` | none: `hypr-computer profile new` makes the folder | |
+| `Delete` | `Event::Delete`, when the daemon runs; without a daemon the command only checks the OS lock | `Effect::Delete`, or `Effect::RefuseDelete` while in use |
+| `DaemonRestarts`, `OrphanExits` | none: the world. A new daemon starts with a new table | |
+
+`rust/crates/domain/tests/profiles_spec.rs` property-tests `step` against the properties above over random orders of events, daemon restarts included; it fails on `TwoSessionsBothAcquire`, `ReleaseAtDisconnect` and `DeleteInUse` when they are put back into `step`. `LockNotHeldByBrowser` is the caller's (which lock it takes, and who inherits it); the black-box tests of #33 cover it by killing the daemon.
+
+### Left out
+
+- **The lifecycle.** Screens, readiness and teardown are `SessionLifecycle`'s; here a session is gone, open, or ending.
+- **Fresh profiles.** Each session's fresh profile is its own folder under its runtime dir, removed with it (#26); nothing is shared, so nothing is locked.
+- **What a profile holds.** Cookies, logins and the like are Chromium's. The model only says which browser runs on which folder.
+- **Profiles made or deleted by hand.** A folder the user deletes with `rm` while a browser uses it is out of the model's reach, as it is of the daemon's.
