@@ -34,18 +34,18 @@ pub fn strings(args: &Map<String, Value>, name: &str) -> Result<Vec<String>, Cal
     }
 }
 
-/// A required coordinate: a whole number of pixels, 0 or more.
+/// A required coordinate: a whole number of pixels, 0 or more. A fraction is
+/// refused, not rounded to a pixel the agent didn't name.
 pub fn coordinate(args: &Map<String, Value>, name: &str) -> Result<u32, CallError> {
     let value = args
         .get(name)
         .ok_or_else(|| invalid(format!("`{name}` is required")))?;
     value
-        .as_f64()
-        .filter(|n| n.is_finite() && *n >= 0.0 && *n <= f64::from(u32::MAX))
-        .map(|n| n.round() as u32)
+        .as_u64()
+        .and_then(|n| u32::try_from(n).ok())
         .ok_or_else(|| {
             invalid(format!(
-                "`{name}` must be a number of pixels, 0 or more, not {value}"
+                "`{name}` must be a whole number of pixels, 0 or more, not {value}"
             ))
         })
 }

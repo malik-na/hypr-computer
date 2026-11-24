@@ -86,6 +86,12 @@ fn a_click_off_the_screen_is_refused_and_nothing_is_clicked() {
     let result = agent.call("click", json!({"x": 1280, "y": 10}));
     assert_eq!(result["isError"], true, "{result}");
     assert!(support::text(&result).contains("1280x800"), "{result}");
+    // A pixel is a whole number: 1.5 isn't rounded to some pixel.
+    let refused = agent.request(
+        "tools/call",
+        json!({"name": "click", "arguments": {"x": 1.5, "y": 5}}),
+    );
+    assert_eq!(refused["error"]["code"], -32602, "{refused}");
     assert_eq!(buttons(&log), []);
 }
 
