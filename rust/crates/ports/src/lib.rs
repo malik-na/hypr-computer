@@ -106,6 +106,8 @@ pub enum Action {
         button: Button,
         count: u32,
     },
+    /// Types the text as key presses: `\n` is Enter, `\t` is Tab.
+    Type(String),
 }
 
 /// An agent's screen, as its tools see it.

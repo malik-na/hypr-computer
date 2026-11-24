@@ -22,6 +22,7 @@ use tracing::warn;
 
 use crate::SIZE;
 use crate::protocol::{READY, Reply, Request, Status};
+use crate::settle::parts;
 
 /// How long a screen may take to say it is up.
 const START_TIME: Duration = Duration::from_secs(10);
@@ -212,10 +213,16 @@ impl ScreenChild {
     /// no other call sees the screen before the app has drawn its response.
     async fn act_and_settle(&self, action: Action) -> Result<(), ScreenError> {
         let mut pipe = self.pipe.lock().await;
-        let since = match self.ask_on(&mut pipe, &Request::Act(action)).await? {
-            Answer::Done(commits) => commits,
-            _ => return Err(mismatch()),
-        };
+        let mut since = 0;
+        for (n, part) in parts(action).into_iter().enumerate() {
+            if n > 0 {
+                self.wait_read(&mut pipe).await?;
+            }
+            since = match self.ask_on(&mut pipe, &Request::Act(part)).await? {
+                Answer::Done(commits) => commits,
+                _ => return Err(mismatch()),
+            };
+        }
         self.settle(&mut pipe, since).await
     }
 
