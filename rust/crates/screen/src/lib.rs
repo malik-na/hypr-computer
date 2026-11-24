@@ -16,6 +16,7 @@ mod settle;
 mod strays;
 mod user;
 
+pub use apps::start_time;
 pub use process::ScreenProcesses;
 
 /// Every screen's size in pixels, width by height.

@@ -2,6 +2,7 @@
 
 use std::error::Error;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use screen::SIZE;
@@ -205,6 +206,8 @@ impl State {
 #[derive(Default)]
 pub struct ClientState {
     pub compositor: CompositorClientState,
+    /// The process that connected, and when it started (`vaults.rs`).
+    pub process: OnceLock<(i32, u64)>,
 }
 
 impl ClientData for ClientState {

@@ -3,7 +3,7 @@
 use std::fmt;
 use std::sync::Arc;
 
-use domain::limits::{Action, Refusal, normalize_site};
+use domain::limits::{Action, Refusal, is_password_manager, normalize_site};
 use ports::{BoxFuture, Png, Screen};
 use serde_json::{Map, Value};
 
@@ -211,14 +211,40 @@ async fn allowed(
                 app: app.as_deref(),
             })
         }
-        Effect::Launch => session.allows(Action::Launch {
-            program: text("app"),
-        }),
+        Effect::Launch => {
+            session.allows(Action::Launch {
+                program: text("app"),
+            })?;
+            // A password manager started by a program that is allowed, such
+            // as a terminal or a shell, is refused too.
+            launched_by_args(args)
+        }
         Effect::Open => {
             let host = normalize_site(text("url")).unwrap_or_default();
             session.allows(Action::Open { host: &host })
         }
     }
+}
+
+/// Refuses a launch whose arguments name a password manager: each word of
+/// each argument is taken as a program, whose file name counts.
+fn launched_by_args(args: &Map<String, Value>) -> Result<(), Refusal> {
+    let words = args
+        .get("args")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .flat_map(str::split_whitespace);
+    for word in words {
+        let name = word.rsplit('/').next().unwrap_or(word);
+        if is_password_manager(name) {
+            return Err(Refusal::PasswordManager {
+                name: name.to_owned(),
+            });
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

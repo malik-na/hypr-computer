@@ -46,6 +46,12 @@ impl Apps {
     }
 }
 
+/// When process `pid` started, in clock ticks since boot: with its pid, what
+/// tells it from a process that gets the same pid later.
+pub fn start_time(pid: u32) -> Option<u64> {
+    stat(pid).map(|s| s.start)
+}
+
 /// What `/proc/<pid>/stat` says of a process.
 struct Stat {
     parent: u32,

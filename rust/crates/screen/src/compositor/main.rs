@@ -86,9 +86,10 @@ fn run(socket: PathBuf, desktop: Option<PathBuf>) -> Result<(), Box<dyn Error>> 
         Generic::new(listening, Interest::READ, Mode::Level),
         |_, listening, state| {
             while let Some(stream) = listening.accept()? {
-                state
+                let client = state
                     .display
                     .insert_client(stream, Arc::new(ClientState::default()))?;
+                state.note_process(&client);
             }
             Ok(PostAction::Continue)
         },

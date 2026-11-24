@@ -16,14 +16,29 @@ use std::path::Path;
 
 use domain::limits::is_password_manager;
 use rustix::process::{Pid, Signal, kill_process};
-use smithay::reexports::wayland_server::Resource;
+use screen::start_time;
 use smithay::reexports::wayland_server::backend::DisconnectReason;
+use smithay::reexports::wayland_server::{Client, Resource};
 use smithay::wayland::compositor::with_states;
 use smithay::wayland::shell::xdg::{ToplevelSurface, XdgToplevelSurfaceData};
 
-use crate::state::State;
+use crate::state::{ClientState, State};
 
 impl State {
+    /// Notes which process `client` is, as it connects: its pid, and when it
+    /// started, so a later look at the pid can tell if it is still that
+    /// process.
+    pub fn note_process(&self, client: &Client) {
+        let Ok(credentials) = client.get_credentials(&self.display) else {
+            return;
+        };
+        if let Some(data) = client.get_data::<ClientState>()
+            && let Some(since) = u32::try_from(credentials.pid).ok().and_then(start_time)
+        {
+            let _ = data.process.set((credentials.pid, since));
+        }
+    }
+
     /// Shows `toplevel`, a new window making its first commit, unless it is
     /// a password manager's.
     pub fn vet_new_window(&mut self, toplevel: ToplevelSurface) {
@@ -56,10 +71,13 @@ impl State {
             .find(|name| is_password_manager(name))
     }
 
-    /// The process that made `toplevel`, as its socket says.
+    /// The process that made `toplevel`, if it is still the one that
+    /// connected: a pid the process left behind may be another's by now.
     fn pid_of(&self, toplevel: &ToplevelSurface) -> Option<i32> {
         let client = toplevel.wl_surface().client()?;
-        Some(client.get_credentials(&self.display).ok()?.pid)
+        let (pid, since) = *client.get_data::<ClientState>()?.process.get()?;
+        let now = u32::try_from(pid).ok().and_then(start_time)?;
+        (now == since).then_some(pid)
     }
 
     /// Takes `toplevel` off the screen for good, closes its app's
