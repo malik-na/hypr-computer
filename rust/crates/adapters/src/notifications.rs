@@ -20,7 +20,7 @@ use tokio::sync::{Mutex, mpsc, oneshot};
 use tracing::warn;
 use zbus::Variant;
 use zbus::message::{Flags, Type};
-use zbus::{Connection, Message, MessageStream};
+use zbus::{Connection, MatchRule, Message, MessageStream};
 
 const NAME: &str = "org.freedesktop.Notifications";
 const PATH: &str = "/org/freedesktop/Notifications";
@@ -197,6 +197,17 @@ async fn connect(address: &str) -> Result<(Connection, MessageStream), String> {
         let connection = zbus::connection::Builder::address(address).build().await?;
         // Made before the first call: it gets every message from now on.
         let stream = MessageStream::from(&connection);
+        // The service's signals: the user's buttons, and closed notices.
+        let signals = MatchRule::builder()
+            .msg_type(Type::Signal)
+            .sender(NAME)
+            .interface(INTERFACE)
+            .path(PATH)
+            .build()?;
+        zbus::fdo::DBusProxy::new(&connection)
+            .await?
+            .add_match_rule(signals)
+            .await?;
         Ok::<_, zbus::Error>((connection, stream))
     };
     match tokio::time::timeout(CONNECT_TIME, connecting).await {
@@ -275,6 +286,20 @@ fn hear(message: &Message, waiting: &mut HashMap<NonZeroU32, SessionId>) -> Opti
                 .map_or_else(String::new, |e| e.to_string());
             let detail = message.body().deserialize::<String>().unwrap_or_default();
             Some(Heard::Failed(session, format!("{name}: {detail}")))
+        }
+        Type::Signal if header.interface().is_some_and(|i| i.as_str() == INTERFACE) => {
+            let body = message.body();
+            match header.member()?.as_str() {
+                "ActionInvoked" => {
+                    let (id, key) = body.deserialize::<(u32, String)>().ok()?;
+                    Some(Heard::Action(id, key))
+                }
+                "NotificationClosed" => {
+                    let (id, _reason) = body.deserialize::<(u32, u32)>().ok()?;
+                    Some(Heard::Closed(id))
+                }
+                _ => None,
+            }
         }
         _ => None,
     }
