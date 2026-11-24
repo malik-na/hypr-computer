@@ -156,6 +156,10 @@ path = "browser_windows_spec.rs"
 name = "takeover_click_spec"
 path = "takeover_click_spec.rs"
 
+[[test]]
+name = "handback_escape_spec"
+path = "handback_escape_spec.rs"
+
 # The tiny Wayland app the tests put on a screen (see support/app.rs).
 [[bin]]
 name = "hc-test-app"

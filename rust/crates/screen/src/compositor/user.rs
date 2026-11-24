@@ -35,6 +35,9 @@ use crate::state::{HEIGHT, State, WIDTH};
 /// to read the user's last input.
 const READ_TIME: Duration = Duration::from_secs(1);
 
+/// The evdev code of Escape: twice in a row hands the screen back.
+const KEY_ESC: u32 = 1;
+
 /// An input of the user's, as given to the screen.
 #[derive(Clone, Copy, Debug)]
 enum Raw {
@@ -48,7 +51,12 @@ impl Raw {
     fn kind(self) -> UserInput {
         match self {
             Raw::Button { pressed: true, .. } => UserInput::Click,
-            Raw::Key { pressed: true, .. } => UserInput::Key { escape: false },
+            Raw::Key {
+                code,
+                pressed: true,
+            } => UserInput::Key {
+                escape: code == KEY_ESC,
+            },
             _ => UserInput::Other,
         }
     }
