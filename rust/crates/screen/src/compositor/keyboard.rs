@@ -1,6 +1,6 @@
-//! The agent's keyboard: text, typed as key presses given straight to the
-//! screen's seat, to the app on the screen. A character a US keyboard lacks
-//! gets a key of its own in the keymap (see `keymap.rs`).
+//! The agent's keyboard: key combinations, and text typed as key presses,
+//! given straight to the screen's seat, to the app on the screen. A character
+//! a US keyboard lacks gets a key of its own in the keymap (see `keymap.rs`).
 
 use std::ops::Range;
 
@@ -35,6 +35,45 @@ impl State {
                 })?;
                 self.tap(&keyboard, key);
             }
+        }
+        Ok(())
+    }
+
+    /// Presses a combination like `ctrl+shift+t`, then lets go of it. A name
+    /// that isn't a key is refused before anything is pressed.
+    pub fn press_keys(&mut self, combo: &str) -> Result<(), String> {
+        let keyboard = self.keyboard()?;
+        let syms = parts(combo)
+            .into_iter()
+            .map(|name| key_named(name, combo))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut added: Vec<Keysym> = Vec::new();
+        for sym in &syms {
+            if !self.keymap.on_us_keyboard(*sym) && !added.contains(sym) {
+                added.push(*sym);
+            }
+        }
+        if added.len() > self.keymap.room() {
+            return Err(format!("{combo:?} has too many keys a US keyboard lacks"));
+        }
+        if self.keymap.add(&added)? {
+            self.send_keymap()?;
+        }
+        let shift = self.keymap.shift;
+        let mut held = Vec::new();
+        for sym in syms {
+            let key = self.keymap.find(sym).ok_or_else(|| {
+                format!("can't press {}: no key for it", xkb::keysym_get_name(sym))
+            })?;
+            if key.shift && !held.contains(&shift) {
+                self.key(&keyboard, shift, KeyState::Pressed);
+                held.push(shift);
+            }
+            self.key(&keyboard, key.code, KeyState::Pressed);
+            held.push(key.code);
+        }
+        for code in held.into_iter().rev() {
+            self.key(&keyboard, code, KeyState::Released);
         }
         Ok(())
     }
@@ -101,6 +140,60 @@ impl State {
         }
         Ok(keyboard)
     }
+}
+
+/// Names agents use for keys, besides xkb's own (`Return`, `Page_Down`).
+const KEY_NAMES: &[(&str, u32)] = &[
+    ("ctrl", xkb::keysyms::KEY_Control_L),
+    ("control", xkb::keysyms::KEY_Control_L),
+    ("shift", xkb::keysyms::KEY_Shift_L),
+    ("alt", xkb::keysyms::KEY_Alt_L),
+    ("super", xkb::keysyms::KEY_Super_L),
+    ("meta", xkb::keysyms::KEY_Super_L),
+    ("win", xkb::keysyms::KEY_Super_L),
+    ("cmd", xkb::keysyms::KEY_Super_L),
+    ("enter", xkb::keysyms::KEY_Return),
+    ("esc", xkb::keysyms::KEY_Escape),
+    ("backspace", xkb::keysyms::KEY_BackSpace),
+    ("del", xkb::keysyms::KEY_Delete),
+    ("pageup", xkb::keysyms::KEY_Page_Up),
+    ("pgup", xkb::keysyms::KEY_Page_Up),
+    ("pagedown", xkb::keysyms::KEY_Page_Down),
+    ("pgdn", xkb::keysyms::KEY_Page_Down),
+];
+
+/// The keys of a combination: `ctrl+shift+t` is `ctrl`, `shift`, `t`, and
+/// `ctrl++` is `ctrl`, `+`.
+fn parts(combo: &str) -> Vec<&str> {
+    match combo.strip_suffix("++") {
+        Some(rest) => rest.split('+').chain(["+"]).collect(),
+        None if combo == "+" => vec!["+"],
+        None => combo.split('+').collect(),
+    }
+}
+
+/// The key symbol of a key's name, in any case: a name from `KEY_NAMES`,
+/// an xkb key name, or a single character, which is its key (`L` is `l`).
+fn key_named(name: &str, combo: &str) -> Result<Keysym, String> {
+    let lower = name.to_lowercase();
+    if let Some((_, sym)) = KEY_NAMES.iter().find(|(alias, _)| *alias == lower) {
+        return Ok(Keysym::from(*sym));
+    }
+    let mut chars = name.chars();
+    if let (Some(c), None) = (chars.next(), chars.next()) {
+        return Ok(xkb::utf32_to_keysym(u32::from(c.to_ascii_lowercase())));
+    }
+    for flags in [xkb::KEYSYM_NO_FLAGS, xkb::KEYSYM_CASE_INSENSITIVE] {
+        let sym = xkb::keysym_from_name(name, flags);
+        if sym.raw() != xkb::keysyms::KEY_NoSymbol {
+            return Ok(sym);
+        }
+    }
+    Err(format!(
+        "{name:?} in {combo:?} isn't a key. Name keys like ctrl, shift, alt, super, Return, \
+         Tab, Escape, BackSpace, Delete, Up, Page_Down or F5, or give a single character, \
+         joined with +"
+    ))
 }
 
 /// The key symbol that types `c`.

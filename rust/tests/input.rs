@@ -191,3 +191,60 @@ fn any_text_arrives_in_order_non_ascii_included() {
         .collect();
     type_text(&mut agent, &log, &many);
 }
+
+/// The key combinations the app received, modifiers on their own left out.
+fn keys(log: &Log) -> Vec<String> {
+    log.events()
+        .into_iter()
+        .filter(|e| e["event"] == "key")
+        .map(|e| e["key"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+#[test]
+fn key_presses_a_combination_and_lets_go_of_it() {
+    let env = Env::new();
+    let _daemon = Daemon::start(&env);
+    let (mut agent, log) = agent_with_app(&env);
+    let before = agent.screenshot();
+
+    for (combo, received) in [
+        ("ctrl+a", "ctrl+a"),
+        ("Return", "Return"),
+        ("ctrl+shift+t", "ctrl+shift+t"),
+        ("alt+F4", "alt+F4"),
+        ("super+Left", "super+Left"),
+        ("shift+Tab", "shift+Tab"),
+        // What agents also write.
+        ("enter", "Return"),
+        ("esc", "Escape"),
+        ("CTRL+L", "ctrl+l"),
+        ("Page_Down", "Next"),
+        ("ctrl+/", "ctrl+slash"),
+    ] {
+        let before = keys(&log).len();
+        act(&mut agent, "key", json!({"keys": combo}));
+        assert_eq!(keys(&log)[before..], [received], "{combo}");
+    }
+    assert!(agent.screenshot() != before, "the screen didn't change");
+    // Nothing is still held down.
+    type_text(&mut agent, &log, "x");
+    assert_eq!(keys(&log).last().unwrap(), "x");
+}
+
+#[test]
+fn an_unknown_key_is_refused_and_nothing_is_pressed() {
+    let env = Env::new();
+    let _daemon = Daemon::start(&env);
+    let (mut agent, log) = agent_with_app(&env);
+
+    let result = agent.call("key", json!({"keys": "ctrl+nosuchkey"}));
+    assert_eq!(result["isError"], true, "{result}");
+    assert!(support::text(&result).contains("nosuchkey"), "{result}");
+    type_text(&mut agent, &log, "x");
+    assert_eq!(
+        keys(&log),
+        ["x"],
+        "something was pressed before the refusal"
+    );
+}

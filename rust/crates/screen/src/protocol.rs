@@ -39,6 +39,7 @@ impl Request {
                 format!("click {} {} {} {count}\n", at.x, at.y, button.name())
             }
             Request::Act(Action::Type(text)) => format!("type {}\n", escape(text)),
+            Request::Act(Action::Key(combo)) => format!("key {}\n", escape(combo)),
         }
     }
 
@@ -61,6 +62,7 @@ impl Request {
                 }))
             }
             ("type", _) => unescape(rest).map(|text| Request::Act(Action::Type(text))),
+            ("key", _) => unescape(rest).map(|combo| Request::Act(Action::Key(combo))),
             _ => None,
         }
     }
