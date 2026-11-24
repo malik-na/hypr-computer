@@ -130,6 +130,7 @@ fn run(socket: PathBuf, desktop: Option<PathBuf>) -> Result<(), Box<dyn Error>> 
     event_loop.run(None, &mut state, |state| {
         let _ = state.display.flush_clients();
         state.flush_view();
+        state.answer_deferred();
     })?;
     Ok(())
 }

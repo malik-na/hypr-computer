@@ -15,6 +15,7 @@ use std::error::Error;
 use std::io::{Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use ports::{Point, UserInput, ViewNotice};
 use screen::protocol::{Request, input_line, parse_notice};
@@ -29,6 +30,10 @@ use wayland_client::{Connection, Dispatch, QueueHandle, WEnum};
 
 use crate::requests::{self, Incoming};
 use crate::state::{HEIGHT, State, WIDTH};
+
+/// How long the call that waited may wait, after the hand-back, for the app
+/// to read the user's last input.
+const READ_TIME: Duration = Duration::from_secs(1);
 
 /// An input of the user's, as given to the screen.
 #[derive(Clone, Copy, Debug)]
@@ -65,6 +70,8 @@ pub struct User {
     held_keys: Vec<u32>,
     /// The daemon's requests waiting for the hand-back.
     deferred: VecDeque<Incoming>,
+    /// When the user last handed back.
+    handed_back: Option<Instant>,
     /// Where the user's pointer is on the screen.
     at: Point,
 }
@@ -183,6 +190,7 @@ impl State {
             }
             ViewNotice::Given => {
                 self.user.has_screen = false;
+                self.user.handed_back = Some(Instant::now());
                 self.release_user();
                 self.show_banner(false);
                 self.answer_deferred();
@@ -195,7 +203,8 @@ impl State {
     /// daemon asks one thing at a time, so it comes with nothing deferred.)
     pub fn request(&mut self, request: Incoming) {
         let view = matches!(request, Ok(Request::View(_)));
-        if !view && (self.user.has_screen || !self.user.deferred.is_empty()) {
+        if !view && (self.user.has_screen || !self.user.deferred.is_empty() || self.reading_user())
+        {
             self.user.deferred.push_back(request);
             return;
         }
@@ -208,16 +217,33 @@ impl State {
         }
     }
 
-    fn answer_deferred(&mut self) {
-        if !self.user.deferred.is_empty() {
-            // The apps get the user's last input before the call goes on.
-            let _ = self.display.flush_clients();
+    /// Answers the requests that waited for the hand-back, once the app has
+    /// read the user's last input (or [`READ_TIME`] has passed): the call
+    /// that waited, or one that comes just after the hand-back, must find
+    /// the screen as the user left it. Asked again on every turn of the
+    /// event loop.
+    pub fn answer_deferred(&mut self) {
+        if self.user.has_screen || self.user.deferred.is_empty() {
+            return;
+        }
+        if self.reading_user() {
+            return;
         }
         while !self.user.has_screen
             && let Some(request) = self.user.deferred.pop_front()
         {
             self.answer(request);
         }
+    }
+
+    /// Whether the app may still be reading the input the user gave before
+    /// handing back, for at most [`READ_TIME`] after it.
+    fn reading_user(&self) -> bool {
+        let recent = self
+            .user
+            .handed_back
+            .is_some_and(|at| at.elapsed() < READ_TIME);
+        recent && self.input_unread()
     }
 
     /// The user gave `raw` in the view: asks the daemon.
@@ -236,6 +262,11 @@ impl State {
     /// Gives the screen an input the daemon let through. A release only if
     /// it gave the press.
     fn give_user(&mut self, raw: Raw) {
+        self.give_user_input(raw);
+        self.input_given();
+    }
+
+    fn give_user_input(&mut self, raw: Raw) {
         let time = self.time();
         match raw {
             Raw::Motion(at) => {
@@ -318,6 +349,7 @@ impl State {
         for code in std::mem::take(&mut self.user.held_keys) {
             self.user_key(code, false);
         }
+        self.input_given();
     }
 
     /// The view lost the desktop's keyboard or pointer: the user lets go of
