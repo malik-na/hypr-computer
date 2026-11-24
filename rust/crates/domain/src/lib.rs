@@ -9,6 +9,7 @@ pub mod control;
 pub mod lifecycle;
 pub mod paths;
 pub mod session;
+pub mod stop;
 pub mod view;
 
 pub use session::{EndReason, Gone, SessionId, Sessions, Stepped};
