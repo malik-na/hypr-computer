@@ -285,3 +285,4 @@ fn the_daemon_refuses_to_start_without_its_screen_program() {
         "it shouldn't listen without a screen to give"
     );
 }
+// probe
