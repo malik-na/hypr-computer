@@ -129,8 +129,8 @@ fn several_agents_views_are_on_the_desktop_at_once_each_showing_its_own_screen()
     let mut desktop = Desktop::start(&env);
     let _daemon = Daemon::start_on(&env, &desktop);
     let mut both = agents(&env, 1, 2);
-    let _on_1 = App::paint(&env.screen_socket(1), RED, RED);
-    let _on_2 = App::paint(&env.screen_socket(2), BLUE, BLUE);
+    let _on_1 = App::paint(&env, 1, RED, RED);
+    let _on_2 = App::paint(&env, 2, BLUE, BLUE);
 
     let titles: Vec<String> = desktop
         .wait_for_views(2)
