@@ -177,6 +177,10 @@ path = "action_log_spec.rs"
 name = "action_log_privacy_spec"
 path = "action_log_privacy_spec.rs"
 
+[[test]]
+name = "action_log_retention_spec"
+path = "action_log_retention_spec.rs"
+
 # The tiny Wayland app the tests put on a screen (see support/app.rs).
 [[bin]]
 name = "hc-test-app"

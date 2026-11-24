@@ -54,6 +54,8 @@ pub async fn run(
             () = stop.cancelled() => break,
             accepted = listener.accept() => match accepted {
                 Ok((stream, _)) => {
+                    let sweeping = log.clone();
+                    tokio::task::spawn_blocking(move || sweeping.sweep());
                     sessions.spawn(session(stream, owner.clone(), registry.clone(), log.clone(), stop.child_token()));
                 }
                 Err(e) => {
