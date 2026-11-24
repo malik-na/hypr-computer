@@ -1,151 +1,115 @@
-//! A tiny Wayland app for the tests: one window, its top half one colour and
-//! its bottom half another, so a screenshot shows whose app it is and which
-//! way up.
+//! `hc-test-app` (in `rust/tests/app/`), the tiny Wayland app the tests put
+//! on a screen, and what it wrote to its log.
 
-use std::io::Write;
-use std::os::fd::AsFd;
-use std::os::unix::net::UnixStream;
-use std::path::Path;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::thread;
+use std::time::{Duration, Instant};
 
-use wayland_client::globals::{GlobalListContents, registry_queue_init};
-use wayland_client::protocol::{
-    wl_buffer, wl_compositor, wl_registry, wl_shm, wl_shm_pool, wl_surface,
-};
-use wayland_client::{Connection, Dispatch, EventQueue, QueueHandle, delegate_noop};
-use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
+use serde_json::Value;
 
-/// The app; it stays on the screen until dropped.
-pub struct App {
-    _connection: Connection,
-    _queue: EventQueue<State>,
+use super::{Env, TIMEOUT};
+
+pub fn program() -> PathBuf {
+    super::bin("hc-test-app")
 }
 
-#[derive(Default)]
-struct State {
-    /// The serial of the window's first configure, once it came.
-    configured: Option<u32>,
-    size: (i32, i32),
+/// `RRGGBB`, as the app takes colours.
+pub fn hex([r, g, b]: [u8; 3]) -> String {
+    format!("{r:02x}{g:02x}{b:02x}")
+}
+
+/// The app's arguments: paint `top` over `bottom`, and log to `log`.
+pub fn args(top: [u8; 3], bottom: [u8; 3], log: &Log) -> Vec<String> {
+    vec![
+        "--top".to_owned(),
+        hex(top),
+        "--bottom".to_owned(),
+        hex(bottom),
+        "--log".to_owned(),
+        log.path.display().to_string(),
+    ]
+}
+
+/// What an app wrote to its log: one JSON object per line.
+pub struct Log {
+    path: PathBuf,
+}
+
+impl Log {
+    /// A log file of its own in `env`.
+    pub fn new(env: &Env) -> Log {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        let n = NEXT.fetch_add(1, Ordering::Relaxed);
+        Log {
+            path: env.path(&format!("app-{n}.log")),
+        }
+    }
+
+    /// Every event logged so far; a line still being written is left out.
+    pub fn events(&self) -> Vec<Value> {
+        let text = fs::read_to_string(&self.path).unwrap_or_default();
+        let whole = &text[..text.rfind('\n').map_or(0, |end| end + 1)];
+        whole
+            .lines()
+            .map(|line| {
+                serde_json::from_str(line).unwrap_or_else(|e| {
+                    panic!("the app logged a line that isn't JSON ({e}): {line}")
+                })
+            })
+            .collect()
+    }
+
+    /// The first event named `name`, waiting for it.
+    pub fn wait_for(&self, name: &str) -> Value {
+        let end = Instant::now() + TIMEOUT;
+        loop {
+            if let Some(event) = self.events().into_iter().find(|e| e["event"] == name) {
+                return event;
+            }
+            assert!(
+                Instant::now() < end,
+                "the app never logged {name:?}; it logged:\n{:#?}",
+                self.events()
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+/// The app, started straight on a screen; it stays there until dropped.
+pub struct App {
+    child: Child,
+    pub log: Log,
 }
 
 impl App {
-    /// Opens a window on the screen at `socket`, paints it, and returns once
-    /// the screen has the picture.
-    pub fn paint(socket: &Path, top: [u8; 3], bottom: [u8; 3]) -> App {
-        let stream = UnixStream::connect(socket)
-            .unwrap_or_else(|e| panic!("can't connect to {}: {e}", socket.display()));
-        let connection = Connection::from_socket(stream).unwrap();
-        let (globals, mut queue) = registry_queue_init::<State>(&connection).unwrap();
-        let qh = queue.handle();
-        let compositor: wl_compositor::WlCompositor = globals.bind(&qh, 4..=6, ()).unwrap();
-        let shm: wl_shm::WlShm = globals.bind(&qh, 1..=1, ()).unwrap();
-        let wm: xdg_wm_base::XdgWmBase = globals.bind(&qh, 1..=6, ()).unwrap();
-
-        let surface = compositor.create_surface(&qh, ());
-        let window = wm.get_xdg_surface(&surface, &qh, ());
-        let toplevel = window.get_toplevel(&qh, ());
-        toplevel.set_title("test app".to_owned());
-        surface.commit();
-        let mut state = State::default();
-        while state.configured.is_none() {
-            queue.blocking_dispatch(&mut state).unwrap();
-        }
-        window.ack_configure(state.configured.unwrap());
-
-        let (width, height) = state.size;
-        assert!(
-            width > 0 && height > 0,
-            "the screen gave no size: {width}x{height}"
-        );
-        let mut pixels = Vec::with_capacity((width * height * 4) as usize);
-        for y in 0..height {
-            let [r, g, b] = if y < height / 2 { top } else { bottom };
-            for _ in 0..width {
-                pixels.extend([b, g, r, 0xff]); // XRGB8888, little-endian
-            }
-        }
-        let mut file = tempfile::tempfile().unwrap();
-        file.write_all(&pixels).unwrap();
-        let pool = shm.create_pool(file.as_fd(), pixels.len() as i32, &qh, ());
-        let buffer = pool.create_buffer(
-            0,
-            width,
-            height,
-            width * 4,
-            wl_shm::Format::Xrgb8888,
-            &qh,
-            (),
-        );
-        surface.attach(Some(&buffer), 0, 0);
-        surface.damage_buffer(0, 0, width, height);
-        surface.commit();
-        // Once the screen answers this, it has handled the commit above.
-        queue.roundtrip(&mut state).unwrap();
-        App {
-            _connection: connection,
-            _queue: queue,
-        }
+    /// Opens the app on session `n`'s screen, painted `top` over `bottom`, and
+    /// returns once the screen has the picture.
+    pub fn paint(env: &Env, n: u64, top: [u8; 3], bottom: [u8; 3]) -> App {
+        let log = Log::new(env);
+        let child = env
+            .command(&program())
+            .args(args(top, bottom, &log))
+            .env("WAYLAND_DISPLAY", env.screen_socket(n))
+            .stdin(Stdio::null())
+            .spawn()
+            .unwrap();
+        let app = App { child, log };
+        app.log.wait_for("ready");
+        app
     }
 }
 
-impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for State {
-    fn event(
-        _: &mut Self,
-        _: &wl_registry::WlRegistry,
-        _: wl_registry::Event,
-        _: &GlobalListContents,
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
+impl Drop for App {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
     }
 }
-
-impl Dispatch<xdg_wm_base::XdgWmBase, ()> for State {
-    fn event(
-        _: &mut Self,
-        wm: &xdg_wm_base::XdgWmBase,
-        event: xdg_wm_base::Event,
-        _: &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-        if let xdg_wm_base::Event::Ping { serial } = event {
-            wm.pong(serial);
-        }
-    }
-}
-
-impl Dispatch<xdg_surface::XdgSurface, ()> for State {
-    fn event(
-        state: &mut Self,
-        _: &xdg_surface::XdgSurface,
-        event: xdg_surface::Event,
-        _: &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-        if let xdg_surface::Event::Configure { serial } = event {
-            state.configured.get_or_insert(serial);
-        }
-    }
-}
-
-impl Dispatch<xdg_toplevel::XdgToplevel, ()> for State {
-    fn event(
-        state: &mut Self,
-        _: &xdg_toplevel::XdgToplevel,
-        event: xdg_toplevel::Event,
-        _: &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-        if let xdg_toplevel::Event::Configure { width, height, .. } = event {
-            state.size = (width, height);
-        }
-    }
-}
-
-delegate_noop!(State: wl_compositor::WlCompositor);
-delegate_noop!(State: ignore wl_surface::WlSurface);
-delegate_noop!(State: ignore wl_shm::WlShm);
-delegate_noop!(State: wl_shm_pool::WlShmPool);
-delegate_noop!(State: ignore wl_buffer::WlBuffer);
