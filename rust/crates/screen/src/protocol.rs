@@ -67,6 +67,9 @@ impl Request {
             Request::Act(Action::Scroll { at, down, right }) => {
                 format!("scroll {} {} {down} {right}\n", at.x, at.y)
             }
+            Request::Act(Action::Drag { from, to }) => {
+                format!("drag {} {} {} {}\n", from.x, from.y, to.x, to.y)
+            }
         }
     }
 
@@ -106,6 +109,13 @@ impl Request {
                     at: point(x, y)?,
                     down: down.parse().ok()?,
                     right: right.parse().ok()?,
+                }))
+            }
+            ("drag", _) => {
+                let [x1, y1, x2, y2] = words(rest)?;
+                Some(Request::Act(Action::Drag {
+                    from: point(x1, y1)?,
+                    to: point(x2, y2)?,
                 }))
             }
             _ => None,

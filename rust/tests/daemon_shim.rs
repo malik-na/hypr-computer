@@ -28,7 +28,8 @@ fn handshake_then_the_tool_list() {
             "move",
             "type",
             "key",
-            "scroll"
+            "scroll",
+            "drag"
         ]
     );
 
