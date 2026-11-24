@@ -6,12 +6,13 @@
 //! its length (`Tool::logged`), and a result word, never the reply's text,
 //! which can echo the arguments.
 
+use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions, Permissions};
 use std::io::{self, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use domain::SessionId;
 use domain::paths::LOG_NAME;
@@ -19,7 +20,10 @@ use serde_json::{Value, json};
 use tools::Call;
 use tracing::warn;
 
+use crate::config::Settings;
+
 mod show;
+mod sweep;
 
 /// The log of every session, this daemon's and earlier ones'.
 pub struct ActionLog {
@@ -30,12 +34,18 @@ pub struct ActionLog {
     /// This daemon's run. Its sessions' files are named after it, since
     /// session numbers start again at 1 with each daemon.
     run: String,
+    /// How long an ended session's log is kept.
+    keep: Duration,
+    /// The names (without `.jsonl`) of the running sessions' logs, which
+    /// are never removed.
+    running: Mutex<HashSet<String>>,
 }
 
 impl ActionLog {
-    /// The log in `state` (`domain::paths::state_dir`). Makes its dirs, and
-    /// closes up whatever in it was opened to others.
-    pub fn open(state: PathBuf) -> io::Result<Self> {
+    /// The log in `state` (`domain::paths::state_dir`). Makes its dirs,
+    /// closes up whatever in it was opened to others, and removes the logs
+    /// kept long enough.
+    pub fn open(state: PathBuf, settings: &Settings) -> io::Result<Self> {
         let log = Self {
             dir: state.join(LOG_NAME),
             state,
@@ -44,25 +54,43 @@ impl ActionLog {
                 utc(SystemTime::now()).replace(':', ""),
                 std::process::id()
             ),
+            keep: Duration::from_secs(settings.days.saturating_mul(24 * 60 * 60)),
+            running: Mutex::new(HashSet::new()),
         };
         log.private_dirs()?;
         close_up(&log.state);
+        log.sweep();
         Ok(log)
     }
 
-    /// The log of this daemon's session `id`.
+    /// The log of this daemon's session `id`, which isn't removed while the
+    /// returned handle lives.
     pub fn session(self: &Arc<Self>, id: SessionId) -> SessionLog {
+        let name = self.name(id.get());
+        self.running().insert(name.clone());
         SessionLog {
             log: self.clone(),
             session: id.get(),
-            file: self.file(id.get()),
+            file: self.dir.join(format!("{name}.jsonl")),
+            name,
             agent: OnceLock::new(),
         }
     }
 
+    /// The name of this daemon's session `n`'s log: its `.jsonl` file
+    /// without the extension.
+    fn name(&self, n: u64) -> String {
+        format!("{}.session-{n}", self.run)
+    }
+
     /// The file of this daemon's session `n`.
     fn file(&self, n: u64) -> PathBuf {
-        self.dir.join(format!("{}.session-{n}.jsonl", self.run))
+        self.dir.join(format!("{}.jsonl", self.name(n)))
+    }
+
+    fn running(&self) -> MutexGuard<'_, HashSet<String>> {
+        // A panic while it was held left it as it was: still right.
+        self.running.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Makes the state dir and the log dir, the user's only.
@@ -83,6 +111,8 @@ pub struct SessionLog {
     log: Arc<ActionLog>,
     session: u64,
     file: PathBuf,
+    /// The log's name, in [`ActionLog::running`] while this lives.
+    name: String,
     /// The name the agent gave, once it has.
     agent: OnceLock<String>,
 }
@@ -115,6 +145,13 @@ impl SessionLog {
         self.log.private_dirs()?;
         let mut file = private_file(&self.file)?;
         file.write_all(format!("{record}\n").as_bytes())
+    }
+}
+
+impl Drop for SessionLog {
+    /// The session has ended: its log is removed in its time.
+    fn drop(&mut self) {
+        self.log.running().remove(&self.name);
     }
 }
 

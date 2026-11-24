@@ -2,6 +2,7 @@
 //! its socket is one agent session speaking MCP. See docs/design.md.
 #![forbid(unsafe_code)]
 
+mod config;
 mod control;
 mod listen;
 mod log;
@@ -15,6 +16,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use adapters::SystemClock;
+use config::Settings;
 use domain::paths;
 use listenfd::ListenFd;
 use log::ActionLog;
@@ -123,15 +125,22 @@ fn main() -> ExitCode {
     }
 }
 
-/// The action log. Every action is logged, so without one the daemon
-/// doesn't start.
+/// The action log, as the user's settings say. Every action is logged, so
+/// without one the daemon doesn't start.
 fn action_log() -> Result<ActionLog, String> {
+    let home = std::env::var_os("HOME");
+    let settings = paths::config_file(
+        std::env::var_os("XDG_CONFIG_HOME").as_deref(),
+        home.as_deref(),
+    )
+    .map(|file| Settings::read(&file))
+    .unwrap_or_default();
     let state = paths::state_dir(
         std::env::var_os("XDG_STATE_HOME").as_deref(),
-        std::env::var_os("HOME").as_deref(),
+        home.as_deref(),
     )
     .ok_or("there is nowhere to keep the action log: neither HOME nor XDG_STATE_HOME is set")?;
-    ActionLog::open(state.clone())
+    ActionLog::open(state.clone(), &settings)
         .map_err(|e| format!("can't make the action log in {}: {e}", state.display()))
 }
 

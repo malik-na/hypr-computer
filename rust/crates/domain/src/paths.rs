@@ -60,15 +60,26 @@ pub fn control_socket(runtime_dir: Option<&OsStr>) -> Result<PathBuf, RuntimeDir
 }
 
 /// hypr-computer's own dir in the user's state dir:
-/// `$XDG_STATE_HOME/hypr-computer`, or `~/.local/state/hypr-computer` when
-/// `$XDG_STATE_HOME` is unset, empty or not absolute (as the XDG spec says).
-/// `None` if neither gives an absolute path.
+/// `$XDG_STATE_HOME/hypr-computer`, or `~/.local/state/hypr-computer`.
 pub fn state_dir(xdg_state_home: Option<&OsStr>, home: Option<&OsStr>) -> Option<PathBuf> {
+    xdg_dir(xdg_state_home, home, ".local/state")
+}
+
+/// The user's settings: `$XDG_CONFIG_HOME/hypr-computer/config.toml`, or
+/// `~/.config/hypr-computer/config.toml`.
+pub fn config_file(xdg_config_home: Option<&OsStr>, home: Option<&OsStr>) -> Option<PathBuf> {
+    Some(xdg_dir(xdg_config_home, home, ".config")?.join("config.toml"))
+}
+
+/// hypr-computer's dir in an XDG base dir: in `$XDG_..._HOME` (`xdg`), or in
+/// `~/<default>` when that is unset, empty or not absolute, as the XDG spec
+/// says. `None` if neither gives an absolute path.
+fn xdg_dir(xdg: Option<&OsStr>, home: Option<&OsStr>, default: &str) -> Option<PathBuf> {
     let absolute =
         |dir: Option<&OsStr>| dir.map(PathBuf::from).filter(|d: &PathBuf| d.is_absolute());
-    let base = match absolute(xdg_state_home) {
-        Some(state) => state,
-        None => absolute(home)?.join(".local").join("state"),
+    let base = match absolute(xdg) {
+        Some(base) => base,
+        None => absolute(home)?.join(default),
     };
     Some(base.join(DIR_NAME))
 }

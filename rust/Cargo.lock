@@ -285,6 +285,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-util",
+ "toml",
  "tools",
  "tracing",
  "tracing-subscriber",
