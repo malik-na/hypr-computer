@@ -18,7 +18,8 @@ use tracing::info;
 use super::stops::STOPPED;
 use super::{Admission, State};
 
-/// What a call that waited for the user to hand back tells the agent.
+/// What the first call let through after a take-over tells the agent: the
+/// one that waited, or, if a stop refused that one, the next.
 pub(super) const TOOK_OVER: &str = "The user took over your screen while this call waited, and \
      has handed it back: what is on it may have changed since you last looked.";
 
@@ -91,6 +92,9 @@ impl State {
             match effect {
                 Effect::TakenOver(id) => {
                     info!("{id}: the user took over its screen");
+                    if let Some(live) = self.sessions.data_mut(id) {
+                        live.taken_over = true;
+                    }
                     self.tell(id, ViewNotice::TakenOver);
                 }
                 Effect::Given(id) => {
@@ -103,14 +107,14 @@ impl State {
         }
     }
 
-    /// The tool call of session `id` that waited runs now, told that the
-    /// user took over. One that is no longer there is over at once.
+    /// The tool call of session `id` that waited runs now. One that is no
+    /// longer there is over at once.
     fn resume(&mut self, id: SessionId) {
         let held = self.sessions.data_mut(id).and_then(|live| live.held.take());
         let admission = held.map(|reply| (reply, self.serve(id)));
         match admission {
             Some((reply, Ok(screen))) => {
-                let admission = self.pass(id, screen, true);
+                let admission = self.pass(id, screen);
                 // A caller that went away drops its pass, which ends its call.
                 let _ = reply.send(admission);
             }

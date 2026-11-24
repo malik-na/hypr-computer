@@ -222,23 +222,18 @@ impl ScreenChild {
     }
 
     /// Connects to the screen's user socket, if it has a view. Before any
-    /// app starts, so none can connect in the daemon's place.
-    /// Without it the view stays watch-only.
+    /// app starts, so none can connect in the daemon's place: a screen still
+    /// listening there would let an app pose as the daemon, so failing to
+    /// connect fails the screen.
     async fn link_user(&self) -> Result<(), ScreenError> {
         if !self.has_view {
             return Ok(());
         }
         let path = self.dir.join(USER_SOCKET);
-        match UserLink::connect(&path).await {
-            Ok(link) => {
-                let _ = self.user.set(link);
-            }
-            Err(e) => warn!(
-                "screen {}: can't connect to {}: {e}; its view stays watch-only",
-                self.pid,
-                path.display()
-            ),
-        }
+        let link = UserLink::connect(&path)
+            .await
+            .map_err(|e| ScreenError(format!("can't connect to {}: {e}", path.display())))?;
+        let _ = self.user.set(link);
         Ok(())
     }
 
@@ -388,7 +383,10 @@ impl ScreenProcess for ScreenChild {
                 return Err(ScreenError("the screen stopped answering".to_owned()));
             };
             let broke = match timeout(START_TIME, open.read_line()).await {
-                Ok(Ok(line)) if line.trim_end() == READY => return self.link_user().await,
+                Ok(Ok(line)) if line.trim_end() == READY => match self.link_user().await {
+                    Ok(()) => return Ok(()),
+                    Err(e) => e,
+                },
                 Ok(Ok(line)) => ScreenError(format!(
                     "the screen said {:?} instead of {READY:?}",
                     line.trim_end()

@@ -187,7 +187,7 @@ impl State {
                                 .step(takeover::Event::ToolCall(id))
                                 .as_slice()
                             {
-                                [TakeOverEffect::Admit(_)] => self.pass(id, screen, false),
+                                [TakeOverEffect::Admit(_)] => self.pass(id, screen),
                                 [TakeOverEffect::Wait(_)] => {
                                     self.hold(id, reply);
                                     break;
@@ -223,19 +223,14 @@ impl State {
         }
     }
 
-    /// Lets a call of session `id` through `Stops`, onto `screen`; `took_over`
-    /// if it waited for the user to hand the screen back.
-    pub(super) fn pass(
-        &mut self,
-        id: SessionId,
-        screen: Arc<dyn ScreenProcess>,
-        took_over: bool,
-    ) -> Admission {
+    /// Lets a call of session `id` through `Stops`, onto `screen`. The first
+    /// since the user took the screen over is told so.
+    pub(super) fn pass(&mut self, id: SessionId, screen: Arc<dyn ScreenProcess>) -> Admission {
         match self.stops.step(Event::ToolCall(id)).as_slice() {
             [Effect::Admit(_)] => {
-                let call = self.sessions.data_mut(id).map_or(0, |live| {
+                let (call, took_over) = self.sessions.data_mut(id).map_or((0, false), |live| {
                     live.calls += 1;
-                    live.calls
+                    (live.calls, std::mem::take(&mut live.taken_over))
                 });
                 let pass = Pass::new(id, call, screen, self.tx.clone(), took_over);
                 Ok(Arc::new(pass) as Arc<dyn Screen>)

@@ -92,6 +92,8 @@ struct Live {
     calls: u64,
     /// Its tool call that waits while the user has its screen.
     held: Option<oneshot::Sender<Admission>>,
+    /// The user took its screen over since its last call was let through.
+    taken_over: bool,
 }
 
 /// A handle to the owner. Cheap to clone.
@@ -293,6 +295,7 @@ impl State {
             waiting: VecDeque::new(),
             calls: 0,
             held: None,
+            taken_over: false,
         };
         let (id, effect) = self.sessions.connect(self.clock.now(), live);
         info!("{id} started; {} open", self.sessions.open_count());

@@ -99,11 +99,16 @@ pub fn listen(handle: &LoopHandle<'static, State>, path: &Path) -> Result<(), Bo
     let path = path.to_owned();
     handle.insert_source(
         Generic::new(listener, Interest::READ, Mode::Level),
-        move |_, listener, state| {
-            let (stream, _) = listener.accept()?;
-            let _ = std::fs::remove_file(&path);
-            state.link_user(stream);
-            Ok(PostAction::Remove)
+        move |_, listener, state| match listener.accept() {
+            Ok((stream, _)) => {
+                let _ = std::fs::remove_file(&path);
+                state.link_user(stream);
+                Ok(PostAction::Remove)
+            }
+            Err(e) => {
+                eprintln!("hypr-computer-screen: accept on the user socket failed: {e}");
+                Ok(PostAction::Continue)
+            }
         },
     )?;
     Ok(())
@@ -123,6 +128,9 @@ impl State {
             |_, reader, state| {
                 let mut buf = [0; 256];
                 match (&**reader).read(&mut buf) {
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {
+                        Ok(PostAction::Continue)
+                    }
                     Ok(0) | Err(_) => {
                         state.unlink_user();
                         Ok(PostAction::Remove)
@@ -183,10 +191,11 @@ impl State {
     }
 
     /// The daemon's request, answered now, or once the user hands back.
-    /// Opening the view never waits: the user may have closed it.
+    /// Opening the view never waits: the user may have closed it. (The
+    /// daemon asks one thing at a time, so it comes with nothing deferred.)
     pub fn request(&mut self, request: Incoming) {
         let view = matches!(request, Ok(Request::View(_)));
-        if (self.user.has_screen && !view) || !self.user.deferred.is_empty() {
+        if !view && (self.user.has_screen || !self.user.deferred.is_empty()) {
             self.user.deferred.push_back(request);
             return;
         }
@@ -311,6 +320,31 @@ impl State {
         }
     }
 
+    /// The view lost the desktop's keyboard or pointer: the user lets go of
+    /// what they held there, so the screen gets its release too.
+    fn user_left(&mut self, keys: bool) {
+        let held = if keys {
+            self.user.held_keys.clone()
+        } else {
+            self.user.held_buttons.clone()
+        };
+        let at = self.user.at;
+        for code in held {
+            self.user_gave(if keys {
+                Raw::Key {
+                    code,
+                    pressed: false,
+                }
+            } else {
+                Raw::Button {
+                    code,
+                    pressed: false,
+                    at,
+                }
+            });
+        }
+    }
+
     /// Where the view's point `(x, y)`, on the surface the pointer is on, is
     /// on the screen.
     fn on_screen(&self, x: f64, y: f64) -> Point {
@@ -399,6 +433,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                 view.seat.on_picture = view.is_picture(&surface);
                 state.pointer_at(surface_x, surface_y);
             }
+            wl_pointer::Event::Leave { .. } => state.user_left(false),
             wl_pointer::Event::Motion {
                 surface_x,
                 surface_y,
@@ -442,16 +477,17 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        if let wl_keyboard::Event::Key {
-            key,
-            state: WEnum::Value(pressed),
-            ..
-        } = event
-        {
-            state.user_gave(Raw::Key {
+        match event {
+            wl_keyboard::Event::Key {
+                key,
+                state: WEnum::Value(pressed),
+                ..
+            } => state.user_gave(Raw::Key {
                 code: key,
                 pressed: pressed == wl_keyboard::KeyState::Pressed,
-            });
+            }),
+            wl_keyboard::Event::Leave { .. } => state.user_left(true),
+            _ => {}
         }
     }
 }
