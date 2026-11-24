@@ -139,6 +139,12 @@ expect_invariant SessionLifecycle HandOffEarly                 ToolCallOnlyOnRea
 expect_liveness  SessionLifecycle CleanupDependsOnDyingProcess ResourcesEventuallyReleased
 expect_pass      Stop
 expect_invariant Stop             CheckStopOnlyAtStart         NoCallServedWhileStopped
+expect_pass      TakeOver
+expect_invariant TakeOver         TakeOverMidCall              AgentAndUserNeverInterleave
+expect_liveness  TakeOver         AdmitWhileTaking             TakeOverTakesEffect
+expect_invariant TakeOver         EscapeForgetsWaitingCall     WaitingOnlyWhileTakenOver
+expect_invariant TakeOver         ClipboardKeptOnHandBack      ClipboardOnlyDuringTakeOver
+expect_invariant TakeOver         EndKeepsTakeOver             EndedSessionLeavesNothing
 
 heading "Summary"
 printf '%s' "$summary"
