@@ -64,6 +64,9 @@ impl Request {
             }
             Request::Act(Action::Type(text)) => format!("type {}\n", escape(text)),
             Request::Act(Action::Key(combo)) => format!("key {}\n", escape(combo)),
+            Request::Act(Action::Scroll { at, down, right }) => {
+                format!("scroll {} {} {down} {right}\n", at.x, at.y)
+            }
         }
     }
 
@@ -97,6 +100,14 @@ impl Request {
             }
             ("type", _) => unescape(rest).map(|text| Request::Act(Action::Type(text))),
             ("key", _) => unescape(rest).map(|combo| Request::Act(Action::Key(combo))),
+            ("scroll", _) => {
+                let [x, y, down, right] = words(rest)?;
+                Some(Request::Act(Action::Scroll {
+                    at: point(x, y)?,
+                    down: down.parse().ok()?,
+                    right: right.parse().ok()?,
+                }))
+            }
             _ => None,
         }
     }

@@ -29,6 +29,7 @@ fn act(state: &mut State, action: Action) -> Result<(), String> {
         Action::Click { at, button, count } => state.click(at, button, count),
         Action::Type(text) => state.type_text(&text),
         Action::Key(combo) => state.press_keys(&combo),
+        Action::Scroll { at, down, right } => state.scroll(at, down, right),
     }
 }
 

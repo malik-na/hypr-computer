@@ -242,3 +242,53 @@ fn an_unknown_key_is_refused_and_nothing_is_pressed() {
         "something was pressed before the refusal"
     );
 }
+
+/// The app's wheel turns, as (axis, value120): 120 is one notch down or right.
+fn scrolls(log: &Log) -> Vec<(String, i64)> {
+    log.events()
+        .into_iter()
+        .filter(|e| e["event"] == "scroll")
+        .map(|e| {
+            (
+                e["axis"].as_str().unwrap().to_owned(),
+                e["value120"].as_i64().unwrap(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn scroll_turns_the_wheel_over_the_point_one_notch_at_a_time() {
+    let env = Env::new();
+    let _daemon = Daemon::start(&env);
+    let (mut agent, log) = agent_with_app(&env);
+    let before = agent.screenshot();
+
+    act(&mut agent, "scroll", json!({"x": 640, "y": 300}));
+    let down = ("vertical".to_owned(), 120);
+    assert_eq!(
+        scrolls(&log),
+        vec![down.clone(); 3],
+        "3 notches down by default"
+    );
+    assert_eq!(pointer_at(&log), (640.0, 300.0));
+    assert!(agent.screenshot() != before, "the screen didn't change");
+
+    for (direction, axis, value) in [
+        ("up", "vertical", -120),
+        ("left", "horizontal", -120),
+        ("right", "horizontal", 120),
+    ] {
+        let before = scrolls(&log).len();
+        act(
+            &mut agent,
+            "scroll",
+            json!({"x": 640, "y": 300, "direction": direction, "amount": 2}),
+        );
+        assert_eq!(
+            scrolls(&log)[before..],
+            vec![(axis.to_owned(), value); 2],
+            "{direction}"
+        );
+    }
+}
