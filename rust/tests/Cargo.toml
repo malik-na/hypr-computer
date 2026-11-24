@@ -130,6 +130,10 @@ path = "view_watch_command.rs"
 name = "stop_all_spec"
 path = "stop_all_spec.rs"
 
+[[test]]
+name = "stop_one_spec"
+path = "stop_one_spec.rs"
+
 # The tiny Wayland app the tests put on a screen (see support/app.rs).
 [[bin]]
 name = "hc-test-app"
