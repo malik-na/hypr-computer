@@ -21,7 +21,15 @@ fn handshake_then_the_tool_list() {
 
     assert_eq!(
         shim.tool_names(),
-        ["screenshot", "launch_app", "click", "move", "type", "key"]
+        [
+            "screenshot",
+            "launch_app",
+            "click",
+            "move",
+            "type",
+            "key",
+            "scroll"
+        ]
     );
 
     let ping = shim.request("ping", json!({}));

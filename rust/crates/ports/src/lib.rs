@@ -110,6 +110,9 @@ pub enum Action {
     Type(String),
     /// Presses a key combination, like `ctrl+shift+t`, and lets go of it.
     Key(String),
+    /// Moves the pointer to `at`, then turns the wheel `down` notches down
+    /// and `right` notches right; negative is up or left.
+    Scroll { at: Point, down: i32, right: i32 },
 }
 
 /// An agent's screen, as its tools see it.
