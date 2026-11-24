@@ -38,7 +38,7 @@ const DOMAIN_MUST_NOT_USE: &[(&str, &str)] = &[
 ];
 
 /// Files in tools/src that aren't tools.
-const TOOLS_NOT_A_TOOL: &[&str] = &["lib.rs", "registry.rs"];
+const TOOLS_NOT_A_TOOL: &[&str] = &["lib.rs", "registry.rs", "args.rs"];
 
 fn workspace() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))

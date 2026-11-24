@@ -27,6 +27,10 @@ path = "architecture.rs"
 name = "screen"
 path = "screen.rs"
 
+[[test]]
+name = "launch_app"
+path = "launch_app.rs"
+
 # The tiny Wayland app the tests put on a screen (see support/app.rs).
 [[bin]]
 name = "hc-test-app"

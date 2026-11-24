@@ -19,7 +19,7 @@ fn handshake_then_the_tool_list() {
     assert_eq!(init["serverInfo"]["name"], "hypr-computer");
     assert!(init["capabilities"]["tools"].is_object(), "{init}");
 
-    assert_eq!(shim.tool_names(), ["screenshot"]);
+    assert_eq!(shim.tool_names(), ["screenshot", "launch_app"]);
 
     let ping = shim.request("ping", json!({}));
     assert_eq!(ping["result"], json!({}), "{ping}");
@@ -56,8 +56,9 @@ fn two_shims_at_once_get_two_sessions() {
     b.initialize();
     let log = daemon.wait_for_log("session 2 started; 2 open");
 
-    assert_eq!(a.tool_names(), ["screenshot"]);
-    assert_eq!(b.tool_names(), ["screenshot"]);
+    let tools = a.tool_names();
+    assert!(tools.contains(&"screenshot".to_owned()), "{tools:?}");
+    assert_eq!(b.tool_names(), tools);
     assert!(!log.contains("ended"), "{log}");
 }
 
