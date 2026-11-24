@@ -1,14 +1,19 @@
-//! The agent's pointer: moves and clicks, given straight to the screen's seat.
+//! The agent's pointer: moves, clicks and the wheel, given straight to the
+//! screen's seat.
 
 use ports::{Button, Point};
 use screen::SIZE;
-use smithay::backend::input::ButtonState;
+use smithay::backend::input::{Axis, AxisSource, ButtonState};
 use smithay::desktop::WindowSurfaceType;
-use smithay::input::pointer::{ButtonEvent, MotionEvent, PointerHandle};
+use smithay::input::pointer::{AxisFrame, ButtonEvent, MotionEvent, PointerHandle};
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::utils::{Logical, Point as Position, SERIAL_COUNTER};
 
 use crate::state::State;
+
+/// How far one wheel notch scrolls, in the units of `wl_pointer.axis`, as
+/// libinput reports a common mouse's.
+const NOTCH: f64 = 15.0;
 
 /// Where `point` is on the screen, or why it isn't.
 fn on_screen(point: Point) -> Result<Position<f64, Logical>, String> {
@@ -55,6 +60,24 @@ impl State {
         for _ in 0..count {
             self.button(button, ButtonState::Pressed)?;
             self.button(button, ButtonState::Released)?;
+        }
+        Ok(())
+    }
+
+    /// Turns the wheel one notch at a time, as a mouse does.
+    pub fn scroll(&mut self, at: Point, down: i32, right: i32) -> Result<(), String> {
+        self.move_pointer(at)?;
+        let pointer = self.pointer()?;
+        for (axis, notches) in [(Axis::Vertical, down), (Axis::Horizontal, right)] {
+            for _ in 0..notches.unsigned_abs() {
+                let notch = notches.signum();
+                let frame = AxisFrame::new(self.time())
+                    .source(AxisSource::Wheel)
+                    .value(axis, f64::from(notch) * NOTCH)
+                    .v120(axis, notch * 120);
+                pointer.axis(self, frame);
+                pointer.frame(self);
+            }
         }
         Ok(())
     }
