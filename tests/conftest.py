@@ -19,8 +19,10 @@ def fresh_binaries():
 @pytest.fixture(autouse=True)
 def no_real_desktop(monkeypatch, tmp_path_factory):
     """Points every test, and every server it starts, at an empty runtime folder. Otherwise the server finds the
-    Hyprland session of the machine the tests run on, and acts on it."""
-    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path_factory.mktemp("run")))
+    Hyprland session and the notification service of the machine the tests run on, and acts on them."""
+    run = tmp_path_factory.mktemp("run")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(run))
+    monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", f"unix:path={run}/bus")
     monkeypatch.setenv("HYPRLAND_INSTANCE_SIGNATURE", "none")
     monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-none")
 
@@ -72,7 +74,11 @@ def desktop(hypr, monkeypatch):
     monkeypatch.setattr(server, "_view", "")
     monkeypatch.setattr(server, "_note", "")
     monkeypatch.setattr(server, "_noticed", 0.0)
+    monkeypatch.setattr(server, "_notice", None)
+    monkeypatch.setattr(server, "_notice_id", "")
+    monkeypatch.setattr(server, "NOTIFY_SEND", os.path.join(hypr.root, "no-notify-send"))
     monkeypatch.setattr(server, "_started", False)
+    monkeypatch.setattr(server, "_stopped", False)
     monkeypatch.setattr(server, "_still", None)
     monkeypatch.setattr(server, "WL_MIRROR", os.path.join(hypr.root, "no-wl-mirror"))
     monkeypatch.setenv("HYPR_COMPUTER_WORKSPACE", "user")

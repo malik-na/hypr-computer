@@ -37,7 +37,7 @@ Updates install tested releases only, and roll back on their own if something go
 - **Your screen stays yours.** Agents open apps and pages on a screen of their own, and leave your windows, workspace and keyboard focus alone. You watch them on workspace 10. They're told to use your own windows, such as an app you're logged in to, only when the task needs them, and to ask you first.
 - **Nothing leaves your machine.** The server runs cut off from the network. Screenshots go only to your agent, which sends them to its own model provider.
 - **You set the limits.** `hypr-computer allow firefox --for 30m` keeps agents to the apps you name, and an agent stops when you move the mouse.
-- **You'll always know.** A notice appears on screen when an agent starts working, and says where to watch it.
+- **You'll always know.** A notification appears when an agent starts working and says where to watch it. It stays until you press **OK** or **Stop agent**.
 - **Password managers are off-limits.** Agents can't click or type into 1Password, Bitwarden, KeePassXC or system password prompts, and those windows are blacked out of every screenshot.
 
 ## Troubleshooting

@@ -827,21 +827,78 @@ def guard(point: tuple[int, int] | None = None, target: Target | None = None, hy
 
 
 _noticed = 0.0  # when the user was last shown the notice
+NOTIFY_SEND = "notify-send"
+NOTICE_TITLE = "AI agent at work"
+_notice: subprocess.Popen | None = None  # the notice on screen, until the user answers it
+_notice_id = ""  # its id with the notification service
+
+
+def notice_text() -> str:
+    if _view != "agent":
+        return "It's using your mouse and keyboard on this screen."
+    with contextlib.suppress(RuntimeError, ValueError):
+        ws = watching(hypr_json("clients"))
+        if ws:
+            return f"It's working on its own workspace. Watch it on {where_to_watch(ws)}."
+    return "It's working on its own workspace. Install wl-mirror to watch it."
 
 
 def show_notice() -> None:
-    """Tells the user, on screen, that an agent is at work, where they can watch it if it works on the agent
-    display, and how to stop it."""
-    global _noticed
+    """Tells the user, on screen, that an agent is at work and where to watch it, in a desktop notification that
+    stays until they press OK or Stop agent. Without a notification service, Hyprland's own notice says it."""
+    global _noticed, _notice
     _noticed = time.monotonic()
+    if _notice is not None and _notice.poll() is None:
+        return
+    text = notice_text()
+    if shutil.which(NOTIFY_SEND):
+        with contextlib.suppress(OSError):
+            _notice = subprocess.Popen(
+                [NOTIFY_SEND, "--app-name=hypr-computer", "--icon=input-mouse", "--urgency=critical",
+                 "--expire-time=0", "--print-id", "--wait", "--action=ok=OK", "--action=stop=Stop agent",
+                 NOTICE_TITLE, text],
+                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+                env=session_env(), start_new_session=True)
+            threading.Thread(target=await_answer, args=(_notice, text), daemon=True).start()
+            return
+    hyprland_notice(text)
+
+
+def hyprland_notice(text: str) -> None:
     with contextlib.suppress(RuntimeError, ValueError):
-        if _view == "agent":
-            ws = watching(hypr_json("clients"))
-            doing = ("An AI agent is working on its own workspace (hypr-computer). "
-                     + (f"Watch it on {where_to_watch(ws)}." if ws else "Install wl-mirror to watch it."))
-        else:
-            doing = "An AI agent is controlling this desktop (hypr-computer)."
-        hypr_command(f"notify 1 5000 0 {doing} To stop it: touch {stop_file()}")
+        hypr_command(f"notify 1 8000 0 {NOTICE_TITLE}: {text} To stop it: hypr-computer stop")
+
+
+def await_answer(notice: subprocess.Popen, text: str) -> None:
+    """Waits for the user to press a button on the notice. Stop agent stops every agent, as hypr-computer stop
+    does; OK, or closing it, lets the agent go on."""
+    global _notice_id
+    first = notice.stdout.readline().strip() if notice.stdout else ""
+    _notice_id = first if first.isdigit() else ""
+    answer = notice.stdout.read().split() if notice.stdout else []
+    if notice.wait() > 0 and not _notice_id:
+        hyprland_notice(text)  # no notification service; a notice the server closed ended with a signal
+    elif answer == ["stop"]:
+        open(stop_file(), "w").close()
+        with contextlib.suppress(OSError):
+            subprocess.Popen([NOTIFY_SEND, "--app-name=hypr-computer", "--icon=input-mouse", "Agents stopped",
+                              "They can't click, type or take screenshots until you run: hypr-computer resume"],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             env=session_env(), start_new_session=True)
+
+
+def close_notice() -> None:
+    """Takes the notice off the screen when the server exits: no agent is left for it to be about."""
+    notice = _notice
+    if notice is None or notice.poll() is not None:
+        return
+    if _notice_id:
+        with contextlib.suppress(OSError, subprocess.SubprocessError):
+            subprocess.run(["gdbus", "call", "--session", "--dest", "org.freedesktop.Notifications",
+                            "--object-path", "/org/freedesktop/Notifications",
+                            "--method", "org.freedesktop.Notifications.CloseNotification", _notice_id],
+                           env=session_env(), capture_output=True, timeout=2)
+    notice.terminate()
 
 
 @dataclass(frozen=True)
@@ -1912,10 +1969,11 @@ def stop_agent_display() -> str:
 
 def shutdown() -> None:
     """When the server exits, turns off the agent display it turned on, parking its windows and closing its live
-    view."""
+    view, and takes its notice off the screen."""
     if _started:
         with contextlib.suppress(Exception):
             stop_agent_display()
+    close_notice()
 
 
 A11Y_PYTHON = "/usr/bin/python3"  # the system Python, which has PyGObject; the server's own environment lacks it
