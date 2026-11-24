@@ -92,6 +92,39 @@ path = "desktop.rs"
 name = "live_view"
 path = "live_view.rs"
 
+# #27, written from the spec by an independent test agent; helpers in view_support/.
+[[test]]
+name = "view_harness"
+path = "view_harness.rs"
+
+[[test]]
+name = "view_placement"
+path = "view_placement.rs"
+
+[[test]]
+name = "view_label"
+path = "view_label.rs"
+
+[[test]]
+name = "view_mirror"
+path = "view_mirror.rs"
+
+[[test]]
+name = "view_watch_only"
+path = "view_watch_only.rs"
+
+[[test]]
+name = "view_tiling"
+path = "view_tiling.rs"
+
+[[test]]
+name = "view_lifecycle"
+path = "view_lifecycle.rs"
+
+[[test]]
+name = "view_watch_command"
+path = "view_watch_command.rs"
+
 # The tiny Wayland app the tests put on a screen (see support/app.rs).
 [[bin]]
 name = "hc-test-app"
@@ -111,6 +144,8 @@ command-fds = "0.3.3"
 png = "0.17.16"
 ports.workspace = true
 tokio.workspace = true
+# The host compositor the live views open on (see view_support/host.rs).
+smithay = { version = "=0.7.0", default-features = false, features = ["wayland_frontend", "desktop", "renderer_pixman"] }
 toml = "0.9"
 wayland-client = "0.31.15"
 wayland-protocols = { version = "0.32.13", features = ["client", "unstable"] }

@@ -1754,6 +1754,7 @@ dependencies = [
  "png",
  "ports",
  "serde_json",
+ "smithay",
  "tempfile",
  "tokio",
  "toml",
