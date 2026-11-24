@@ -45,9 +45,13 @@ impl Hyprland {
                 if stream.read_to_string(&mut request).is_err() {
                     continue;
                 }
+                // Holding is meant for the view requests; the notice fallback (#29) is answered at once.
+                let notice = request.starts_with("/notify ");
                 recorded.lock().unwrap().push(request);
                 let (lock, released) = &*answering;
-                let answer = released.wait_while(lock.lock().unwrap(), |a| a.1).unwrap();
+                let answer = released
+                    .wait_while(lock.lock().unwrap(), |a| a.1 && !notice)
+                    .unwrap();
                 let _ = stream.write_all(answer.0.as_bytes());
             }
         });
