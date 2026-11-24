@@ -75,4 +75,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
+      # The agent's screen (crates/screen) links these.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpixman-1-dev libxkbcommon-dev
       - run: cargo test --locked --workspace

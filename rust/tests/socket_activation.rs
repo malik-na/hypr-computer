@@ -11,7 +11,6 @@ use std::os::unix::net::UnixListener;
 use std::process::Command;
 
 use command_fds::{CommandFdExt, FdMapping};
-use serde_json::json;
 use support::{Daemon, Env, Shim, daemon_bin};
 
 #[test]
@@ -29,6 +28,7 @@ fn the_daemon_serves_a_socket_passed_by_systemd() {
     cmd.env_clear()
         .env("PATH", std::env::var_os("PATH").unwrap_or_default())
         .env("HOME", env.path("home"))
+        .env("XDG_RUNTIME_DIR", env.runtime_dir())
         .args(["-c", "export LISTEN_PID=$$ LISTEN_FDS=1; exec \"$0\""])
         .arg(daemon_bin())
         .fd_mappings(vec![FdMapping {
@@ -36,17 +36,15 @@ fn the_daemon_serves_a_socket_passed_by_systemd() {
             child_fd: 3,
         }])
         .unwrap();
-    // No XDG_RUNTIME_DIR for the daemon: it can only be serving the passed socket.
+    // Had it bound a socket of its own, it would have found this one taken
+    // and refused to start.
     let mut daemon = Daemon::spawn(&env, cmd, "daemon.log");
     daemon.wait_for_log("listening on the socket passed by systemd");
 
     let mut shim = Shim::start(&env);
     let init = shim.initialize();
     assert_eq!(init["serverInfo"]["name"], "hypr-computer");
-    assert_eq!(
-        shim.request("tools/list", json!({}))["result"]["tools"],
-        json!([])
-    );
+    assert_eq!(shim.screenshot().width, 1280);
 
     assert!(daemon.terminate().success(), "{}", daemon.log());
     assert!(

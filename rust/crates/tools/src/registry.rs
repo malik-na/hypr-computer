@@ -1,25 +1,25 @@
 //! The registry of tools and the guard every tool call goes through.
 
 use std::fmt;
-use std::future::Future;
-use std::pin::Pin;
+use std::sync::Arc;
 
-use domain::SessionId;
+use ports::{BoxFuture, Png, Screen};
 use serde_json::{Map, Value};
+
+use crate::screenshot;
 
 /// Every tool, one line each: `&screenshot::Screenshot,`. A tool's file is
 /// `src/<name>.rs` and its `mod` line is in `lib.rs`.
-const TOOLS: &[&dyn Tool] = &[];
-
-/// A boxed future, so tools can be stored side by side as `dyn Tool`.
-pub(crate) type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+const TOOLS: &[&dyn Tool] = &[&screenshot::Screenshot];
 
 /// One MCP tool. Private to this crate: callers go through [`Registry::call`].
 pub(crate) trait Tool: Send + Sync {
     fn spec(&self) -> ToolSpec;
+    /// Runs the tool on the caller's screen. Only the guard calls this, once
+    /// the session has let the call through.
     fn call<'a>(
         &'a self,
-        ctx: &'a CallContext,
+        screen: &'a dyn Screen,
         args: Map<String, Value>,
     ) -> BoxFuture<'a, Result<ToolOutput, CallError>>;
 }
@@ -33,16 +33,19 @@ pub struct ToolSpec {
     pub input_schema: Map<String, Value>,
 }
 
-/// Who is calling.
-#[derive(Clone, Debug)]
-pub struct CallContext {
-    pub session: SessionId,
+/// Lets a session's tool calls through to its screen. The daemon implements
+/// it with the session's lifecycle; the guard asks it before every call.
+pub trait Admit: Send + Sync {
+    /// The session's screen, if a tool may use it now; otherwise why not, in
+    /// words for the agent.
+    fn admit(&self) -> BoxFuture<'_, Result<Arc<dyn Screen>, String>>;
 }
 
 /// One piece of a tool's result.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Content {
     Text(String),
+    Image(Png),
 }
 
 /// A tool's result. `is_error` results go back to the agent as a failed tool
@@ -51,6 +54,16 @@ pub enum Content {
 pub struct ToolOutput {
     pub content: Vec<Content>,
     pub is_error: bool,
+}
+
+impl ToolOutput {
+    /// A failed call, and what the agent should know about it.
+    pub fn error(why: impl Into<String>) -> Self {
+        Self {
+            content: vec![Content::Text(why.into())],
+            is_error: true,
+        }
+    }
 }
 
 /// Why a call couldn't be made at all.
@@ -94,10 +107,11 @@ impl Registry {
 
     /// The guard: every tool call goes through here and nowhere else. Checks
     /// that apply to every tool (stop, take-over, limits, the action log)
-    /// belong in this function, not in the tools.
+    /// belong in this function, not in the tools. A call the session doesn't
+    /// let through gets a failed result that says why, and the tool never runs.
     pub async fn call(
         &self,
-        ctx: &CallContext,
+        session: &dyn Admit,
         name: &str,
         args: Map<String, Value>,
     ) -> Result<ToolOutput, CallError> {
@@ -106,20 +120,40 @@ impl Registry {
             .iter()
             .find(|t| t.spec().name == name)
             .ok_or_else(|| CallError::UnknownTool(name.to_owned()))?;
-        tool.call(ctx, args).await
+        match session.admit().await {
+            Ok(screen) => tool.call(screen.as_ref(), args).await,
+            Err(why) => Ok(ToolOutput::error(why)),
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use domain::Sessions;
+    use ports::ScreenError;
     use std::collections::HashSet;
-    use std::time::Instant;
 
-    fn ctx() -> CallContext {
-        CallContext {
-            session: Sessions::new().open(Instant::now()),
+    /// A session whose screen is ready, or isn't.
+    struct Ready(bool);
+
+    struct Blank;
+
+    impl Screen for Blank {
+        fn screenshot(&self) -> BoxFuture<'_, Result<Png, ScreenError>> {
+            Box::pin(async { Ok(Png(Vec::new())) })
+        }
+    }
+
+    impl Admit for Ready {
+        fn admit(&self) -> BoxFuture<'_, Result<Arc<dyn Screen>, String>> {
+            let ready = self.0;
+            Box::pin(async move {
+                if ready {
+                    Ok(Arc::new(Blank) as Arc<dyn Screen>)
+                } else {
+                    Err("not yet".to_owned())
+                }
+            })
         }
     }
 
@@ -135,7 +169,7 @@ mod tests {
         }
         fn call<'a>(
             &'a self,
-            ctx: &'a CallContext,
+            _screen: &'a dyn Screen,
             args: Map<String, Value>,
         ) -> BoxFuture<'a, Result<ToolOutput, CallError>> {
             Box::pin(async move {
@@ -144,16 +178,11 @@ mod tests {
                     .and_then(Value::as_str)
                     .ok_or_else(|| CallError::InvalidArguments("`text` is required".into()))?;
                 Ok(ToolOutput {
-                    content: vec![Content::Text(format!("{}: {text}", ctx.session))],
+                    content: vec![Content::Text(text.to_owned())],
                     is_error: false,
                 })
             })
         }
-    }
-
-    #[test]
-    fn the_builtin_registry_is_empty_for_now() {
-        assert_eq!(Registry::builtin().list(), Vec::new());
     }
 
     #[test]
@@ -170,7 +199,7 @@ mod tests {
     #[tokio::test]
     async fn an_unknown_tool_is_refused_by_the_guard() {
         let err = Registry::builtin()
-            .call(&ctx(), "nope", Map::new())
+            .call(&Ready(true), "nope", Map::new())
             .await
             .unwrap_err();
         assert_eq!(err, CallError::UnknownTool("nope".into()));
@@ -184,11 +213,15 @@ mod tests {
         assert_eq!(reg.list(), vec![Echo.spec()]);
         let mut args = Map::new();
         args.insert("text".into(), Value::from("hi"));
-        let out = reg.call(&ctx(), "echo", args).await.unwrap();
-        assert_eq!(out.content, vec![Content::Text("session 1: hi".into())]);
+        let out = reg.call(&Ready(true), "echo", args.clone()).await.unwrap();
+        assert_eq!(out.content, vec![Content::Text("hi".into())]);
         assert_eq!(
-            reg.call(&ctx(), "echo", Map::new()).await,
+            reg.call(&Ready(true), "echo", Map::new()).await,
             Err(CallError::InvalidArguments("`text` is required".into()))
+        );
+        assert_eq!(
+            reg.call(&Ready(false), "echo", args).await,
+            Ok(ToolOutput::error("not yet"))
         );
     }
 }

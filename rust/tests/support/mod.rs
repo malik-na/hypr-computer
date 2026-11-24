@@ -5,6 +5,11 @@
 // Each test file uses a different subset of these helpers.
 #![allow(dead_code)]
 
+pub mod app;
+mod image;
+
+pub use image::Image;
+
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::fs::PermissionsExt;
@@ -29,14 +34,19 @@ pub fn bin(name: &str) -> PathBuf {
             .to_path_buf();
         let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
         let status = Command::new(env!("CARGO"))
-            .args(["build", "--quiet", "--bins", "-p", "daemon", "-p", "shim"])
+            .args([
+                "build", "--quiet", "--bins", "-p", "daemon", "-p", "shim", "-p", "screen",
+            ])
             .arg("--manifest-path")
             .arg(workspace.join("Cargo.toml"))
             .arg("--target-dir")
             .arg(&target)
             .status()
             .expect("run cargo build");
-        assert!(status.success(), "building the daemon and shim failed");
+        assert!(
+            status.success(),
+            "building the daemon, shim and screen failed"
+        );
         target.join("debug")
     });
     dir.join(name)
@@ -90,6 +100,16 @@ impl Env {
         self.daemon_dir().join("daemon.sock")
     }
 
+    /// Where session `n`'s screen keeps its files.
+    pub fn screen_dir(&self, n: u64) -> PathBuf {
+        self.daemon_dir().join(format!("screen-{n}"))
+    }
+
+    /// The Wayland socket of session `n`'s screen, for apps.
+    pub fn screen_socket(&self, n: u64) -> PathBuf {
+        self.screen_dir(n).join("wayland")
+    }
+
     pub fn path(&self, name: &str) -> PathBuf {
         self.dir.path().join(name)
     }
@@ -116,6 +136,31 @@ pub fn wait_exit(child: &mut Child, timeout: Duration) -> Option<ExitStatus> {
         thread::sleep(Duration::from_millis(10));
     }
     None
+}
+
+/// Whether process `pid` exists, zombies included.
+pub fn alive(pid: u32) -> bool {
+    Path::new("/proc").join(pid.to_string()).exists()
+}
+
+/// Sends SIGKILL to `pid`.
+pub fn kill_9(pid: u32) {
+    let ok = Command::new("kill")
+        .args(["-KILL", &pid.to_string()])
+        .status()
+        .unwrap()
+        .success();
+    assert!(ok, "kill -KILL {pid} failed");
+}
+
+/// The files in `dir`, or `None` if it doesn't exist.
+pub fn files_in(dir: &Path) -> Option<Vec<String>> {
+    let entries = fs::read_dir(dir).ok()?;
+    Some(
+        entries
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect(),
+    )
 }
 
 /// The real daemon, its stderr going to a log file.
@@ -181,6 +226,18 @@ impl Daemon {
             "the daemon never logged {needle:?}; its log:\n{}",
             self.log()
         );
+    }
+
+    /// The pid of session `n`'s screen process, as the daemon logged it.
+    pub fn screen_pid(&self, n: u64) -> u32 {
+        let needle = format!("session {n}: starting its screen (pid ");
+        let log = self.wait_for_log(&needle);
+        let rest = &log[log.find(&needle).unwrap() + needle.len()..];
+        rest[..rest.find(')').unwrap()].parse().unwrap()
+    }
+
+    pub fn is_running(&mut self) -> bool {
+        self.child.try_wait().unwrap().is_none()
     }
 
     pub fn terminate(&mut self) -> ExitStatus {
@@ -258,6 +315,41 @@ impl Shim {
             if msg["id"] == json!(id) {
                 return msg;
             }
+        }
+    }
+
+    /// The names `tools/list` gives.
+    pub fn tool_names(&mut self) -> Vec<String> {
+        let list = self.request("tools/list", json!({}));
+        let tools = list["result"]["tools"].as_array();
+        let tools = tools.unwrap_or_else(|| panic!("tools/list failed: {list}"));
+        tools
+            .iter()
+            .map(|t| t["name"].as_str().unwrap().to_owned())
+            .collect()
+    }
+
+    /// Calls a tool and returns its result; fails the test on a protocol error.
+    pub fn call(&mut self, name: &str, arguments: Value) -> Value {
+        let resp = self.request("tools/call", json!({"name": name, "arguments": arguments}));
+        assert!(resp.get("error").is_none(), "{name} failed: {resp}");
+        resp["result"].clone()
+    }
+
+    /// Takes a screenshot as an agent would, waiting while the daemon says
+    /// the screen is still starting.
+    pub fn screenshot(&mut self) -> Image {
+        let end = Instant::now() + TIMEOUT;
+        loop {
+            let result = self.call("screenshot", json!({}));
+            if result["isError"] != json!(true) {
+                return Image::from_result(&result);
+            }
+            assert!(
+                result.to_string().contains("still starting") && Instant::now() < end,
+                "screenshot failed: {result}"
+            );
+            thread::sleep(Duration::from_millis(20));
         }
     }
 

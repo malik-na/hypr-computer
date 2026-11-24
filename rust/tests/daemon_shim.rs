@@ -10,7 +10,7 @@ use serde_json::json;
 use support::{Daemon, Env, Shim};
 
 #[test]
-fn handshake_then_an_empty_tool_list() {
+fn handshake_then_the_tool_list() {
     let env = Env::new();
     let _daemon = Daemon::start(&env);
     let mut shim = Shim::start(&env);
@@ -19,8 +19,7 @@ fn handshake_then_an_empty_tool_list() {
     assert_eq!(init["serverInfo"]["name"], "hypr-computer");
     assert!(init["capabilities"]["tools"].is_object(), "{init}");
 
-    let list = shim.request("tools/list", json!({}));
-    assert_eq!(list["result"]["tools"], json!([]), "{list}");
+    assert_eq!(shim.tool_names(), ["screenshot"]);
 
     let ping = shim.request("ping", json!({}));
     assert_eq!(ping["result"], json!({}), "{ping}");
@@ -57,14 +56,8 @@ fn two_shims_at_once_get_two_sessions() {
     b.initialize();
     let log = daemon.wait_for_log("session 2 started; 2 open");
 
-    assert_eq!(
-        a.request("tools/list", json!({}))["result"]["tools"],
-        json!([])
-    );
-    assert_eq!(
-        b.request("tools/list", json!({}))["result"]["tools"],
-        json!([])
-    );
+    assert_eq!(a.tool_names(), ["screenshot"]);
+    assert_eq!(b.tool_names(), ["screenshot"]);
     assert!(!log.contains("ended"), "{log}");
 }
 

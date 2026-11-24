@@ -3,22 +3,24 @@
 
 use std::sync::Arc;
 
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, Implementation,
     ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerConfig, Tool,
 };
 use rmcp::service::RequestContext;
 use rmcp::{ErrorData, RoleServer, ServerHandler};
-use tools::{CallContext, Content, Registry, ToolOutput, ToolSpec};
+use tools::{Admit, Content, Registry, ToolOutput, ToolSpec};
 
 pub struct SessionServer {
-    ctx: CallContext,
+    session: Arc<dyn Admit>,
     registry: Arc<Registry>,
 }
 
 impl SessionServer {
-    pub fn new(ctx: CallContext, registry: Arc<Registry>) -> Self {
-        Self { ctx, registry }
+    pub fn new(session: Arc<dyn Admit>, registry: Arc<Registry>) -> Self {
+        Self { session, registry }
     }
 }
 
@@ -46,7 +48,11 @@ impl ServerHandler for SessionServer {
         _context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
         let args = request.arguments.unwrap_or_default();
-        match self.registry.call(&self.ctx, &request.name, args).await {
+        match self
+            .registry
+            .call(self.session.as_ref(), &request.name, args)
+            .await
+        {
             Ok(output) => Ok(to_mcp_result(output).into()),
             // MCP: unknown tools and bad arguments are invalid-params errors.
             Err(e) => Err(ErrorData::invalid_params(e.to_string(), None)),
@@ -64,6 +70,7 @@ fn to_mcp_result(output: ToolOutput) -> CallToolResult {
         .into_iter()
         .map(|c| match c {
             Content::Text(t) => ContentBlock::text(t),
+            Content::Image(png) => ContentBlock::image(STANDARD.encode(png.0), "image/png"),
         })
         .collect();
     if output.is_error {

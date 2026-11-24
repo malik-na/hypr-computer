@@ -8,11 +8,13 @@ mod owner;
 mod serve;
 
 use std::io::IsTerminal;
+use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
 
 use adapters::SystemClock;
 use listenfd::ListenFd;
+use screen::ScreenProcesses;
 use tracing::{Level, info};
 use tracing_subscriber::filter::Targets;
 use tracing_subscriber::prelude::*;
@@ -40,6 +42,13 @@ fn main() -> ExitCode {
         .with(filter)
         .init();
 
+    let program = match screen_program() {
+        Ok(program) => program,
+        Err(e) => {
+            eprintln!("hypr-computer-daemon: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
     let listening = match listen::listen(&mut fds, std::env::var_os("XDG_RUNTIME_DIR").as_deref()) {
         Ok(l) => l,
         Err(e) => {
@@ -48,6 +57,7 @@ fn main() -> ExitCode {
         }
     };
     info!("{}", listening.describe());
+    let screens = Arc::new(ScreenProcesses::new(program, listening.dir.clone()));
 
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -59,11 +69,31 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    match runtime.block_on(serve::run(listening, Arc::new(SystemClock))) {
+    match runtime.block_on(serve::run(listening, Arc::new(SystemClock), screens)) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("hypr-computer-daemon: {e}");
             ExitCode::FAILURE
         }
     }
+}
+
+/// The screen program: `$HYPR_COMPUTER_SCREEN` if set, otherwise
+/// `hypr-computer-screen` next to this program. Without one, every agent
+/// would connect only to be dropped, so the daemon doesn't start.
+fn screen_program() -> Result<PathBuf, String> {
+    let program = match std::env::var_os("HYPR_COMPUTER_SCREEN") {
+        Some(program) => PathBuf::from(program),
+        None => std::env::current_exe()
+            .map_err(|e| format!("can't find my own program: {e}"))?
+            .with_file_name("hypr-computer-screen"),
+    };
+    if !program.is_file() {
+        return Err(format!(
+            "there is no screen program at {}; install hypr-computer-screen next to \
+             hypr-computer-daemon, or set HYPR_COMPUTER_SCREEN to its path",
+            program.display()
+        ));
+    }
+    Ok(program)
 }

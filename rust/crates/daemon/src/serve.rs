@@ -5,14 +5,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use domain::EndReason;
-use ports::Clock;
+use ports::{Clock, Screens};
 use rmcp::ServiceExt;
 use rmcp::service::QuitReason;
 use tokio::net::UnixStream;
 use tokio::signal::unix::{SignalKind, signal};
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
-use tools::{CallContext, Registry};
+use tools::Registry;
 use tracing::{info, warn};
 
 use crate::listen::Listening;
@@ -22,10 +22,15 @@ use crate::owner::Owner;
 /// How long sessions get to wind down once the daemon is told to stop.
 const STOP_GRACE: Duration = Duration::from_secs(5);
 
-pub async fn run(listening: Listening, clock: Arc<dyn Clock>) -> Result<(), String> {
+pub async fn run(
+    listening: Listening,
+    clock: Arc<dyn Clock>,
+    screens: Arc<dyn Screens>,
+) -> Result<(), String> {
     let Listening {
         listener,
         owned_path,
+        ..
     } = listening;
     listener
         .set_nonblocking(true)
@@ -35,7 +40,7 @@ pub async fn run(listening: Listening, clock: Arc<dyn Clock>) -> Result<(), Stri
 
     let stop = CancellationToken::new();
     watch_signals(stop.clone())?;
-    let (owner, owner_task) = Owner::spawn(clock);
+    let (owner, owner_task) = Owner::spawn(clock, screens);
     let registry = Arc::new(Registry::builtin());
     let sessions = TaskTracker::new();
 
@@ -72,9 +77,15 @@ pub async fn run(listening: Listening, clock: Arc<dyn Clock>) -> Result<(), Stri
             STOP_GRACE.as_secs()
         );
     }
+    // The owner ends once every session's screen is torn down.
+    owner.stop();
     drop(owner);
-    // The owner ends once the last ticket is dropped; give it the same grace.
-    let _ = tokio::time::timeout(STOP_GRACE, owner_task).await;
+    if tokio::time::timeout(STOP_GRACE, owner_task).await.is_err() {
+        warn!(
+            "screens still being torn down after {}s; stopping anyway",
+            STOP_GRACE.as_secs()
+        );
+    }
     info!("stopped");
     Ok(())
 }
@@ -94,24 +105,24 @@ fn watch_signals(stop: CancellationToken) -> Result<(), String> {
     Ok(())
 }
 
-/// One agent session: lives exactly as long as its connection.
+/// One agent connection: its session ends when it closes, and the session
+/// closes it when it ends first.
 async fn session(
     stream: UnixStream,
     owner: Owner,
     registry: Arc<Registry>,
     stop: CancellationToken,
 ) {
-    let Some(ticket) = owner.open().await else {
+    let connection = stop.child_token();
+    let Some(ticket) = owner.open(connection.clone()).await else {
         return;
     };
-    let ctx = CallContext {
-        session: ticket.id(),
-    };
-    let server = SessionServer::new(ctx, registry);
-    let reason = match server.serve_with_ct(stream, stop.clone()).await {
+    let server = SessionServer::new(Arc::new(ticket.gate()), registry);
+    let reason = match server.serve_with_ct(stream, connection).await {
         Ok(running) => match running.waiting().await {
             Ok(QuitReason::Closed) => EndReason::Disconnected,
-            Ok(QuitReason::Cancelled) => EndReason::DaemonStopping,
+            // Otherwise the session ended first and closed it: the reason is moot.
+            Ok(QuitReason::Cancelled) if stop.is_cancelled() => EndReason::DaemonStopping,
             Ok(other) => EndReason::Failed(format!("{other:?}")),
             Err(e) => EndReason::Failed(e.to_string()),
         },
