@@ -54,15 +54,25 @@ impl Tool for LaunchApp {
                      Take a screenshot to see whether it has since.",
                     waited.as_secs()
                 )),
-                Ok(Launched::Exited { status, output }) => {
+                Ok(Launched::Exited {
+                    status,
+                    failed,
+                    output,
+                }) => {
                     let said = if output.is_empty() {
                         String::new()
                     } else {
                         format!(" It printed:\n{output}")
                     };
-                    ToolOutput::error(format!(
-                        "{program} exited ({status}) before it opened a window.{said}"
-                    ))
+                    if failed {
+                        ToolOutput::error(format!(
+                            "{program} exited ({status}) before it opened a window.{said}"
+                        ))
+                    } else {
+                        ToolOutput::text(format!(
+                            "{program} ran and exited ({status}), and no window opened.{said}"
+                        ))
+                    }
                 }
                 Err(e) => ToolOutput::error(format!("Couldn't start {program}: {e}")),
             })

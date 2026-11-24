@@ -53,9 +53,14 @@ pub enum Launched {
     Window { pid: u32 },
     /// It is running, but opened no window in the time it was given.
     NoWindow { pid: u32, waited: Duration },
-    /// It ended before it opened a window. `output` is the end of what it
-    /// printed, which usually says why.
-    Exited { status: String, output: String },
+    /// It ended, and no window opened: it `failed`, or it ran and was done,
+    /// like a launcher whose app opened nothing. `output` is the end of what
+    /// it printed, which usually says why.
+    Exited {
+        status: String,
+        failed: bool,
+        output: String,
+    },
 }
 
 /// An agent's screen, as its tools see it.
