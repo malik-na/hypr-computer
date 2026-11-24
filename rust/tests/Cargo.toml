@@ -177,6 +177,10 @@ path = "allowed_apps_spec.rs"
 name = "allow_command_spec"
 path = "allow_command_spec.rs"
 
+[[test]]
+name = "read_only_spec"
+path = "read_only_spec.rs"
+
 # The tiny Wayland app the tests put on a screen (see support/app.rs).
 [[bin]]
 name = "hc-test-app"
