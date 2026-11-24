@@ -6,6 +6,7 @@ hypr-computer is being rewritten in Rust with a new architecture. The Python ser
 
 - **One daemon per login session**, run as a socket-activated systemd user service. It listens on `$XDG_RUNTIME_DIR/hypr-computer/daemon.sock`, in a directory only the user can open.
 - **A tiny shim per agent.** The agent starts the shim as its MCP server. The shim only joins its stdin and stdout to the daemon's socket. Each connection is one agent session, and the session ends the moment its connection closes, however the agent died.
+- **The `hypr-computer` commands** (`watch` first) ask the daemon on a socket of their own, `control.sock` next to `daemon.sock`, and print its answer. The daemon owns the sessions, so it does the work.
 - **Each agent session gets its own screen**, never the user's. The screen is our own compositor, written in Rust with [Smithay](https://github.com/Smithay/smithay): one screen process per agent, on the GPU with a software fallback, one app full screen at a time, 1280x800 by default (configurable). A throwaway Smithay prototype must first pass the checks the nested-Hyprland prototype passed. If it can't, the fallback is nested Hyprland behind the same `Screen` interface.
 - **Crates:** `domain` (state and rules, pure), `ports` (traits for the outside world), `adapters` (their real implementations), `tools` (one file per MCP tool and a registry), `daemon` and `shim`. There is no global mutable state: one task owns the sessions and others send it messages. Every tool call passes through one guard in the registry.
 

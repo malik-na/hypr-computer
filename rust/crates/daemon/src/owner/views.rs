@@ -1,10 +1,12 @@
 //! Live views: each session's screen opens as a window on the user's desktop
 //! once the screen is ready and the agent has said its name, [`LIMIT`] at a
-//! time, and closes with it.
+//! time, and `hypr-computer watch` takes the user to them.
 
 use domain::SessionId;
+use domain::control::Reply;
 use domain::lifecycle::SessionState;
 use domain::view::{LIMIT, title};
+use tokio::sync::oneshot;
 use tracing::{info, warn};
 
 use super::{News, State};
@@ -19,8 +21,8 @@ pub enum View {
     Open,
     /// Not shown: [`LIMIT`] other views were.
     Refused,
-    /// It couldn't open; it isn't tried again.
-    Failed,
+    /// It couldn't open, and why; it isn't tried again.
+    Failed(String),
 }
 
 impl View {
@@ -110,10 +112,74 @@ impl State {
             }
             Err(why) => {
                 warn!("{id}: no live view: {why}");
-                live.view = View::Failed;
+                live.view = View::Failed(why);
                 // Its room goes to an agent that is waiting.
                 self.show_waiting();
             }
         }
+    }
+
+    /// `hypr-computer watch`: takes the user to the views, and says whose
+    /// they are.
+    pub(super) fn watch(&self, reply: oneshot::Sender<Reply>) {
+        let shown: Vec<String> = self
+            .sessions
+            .iter()
+            .filter(|(_, live)| live.view.shown())
+            .filter_map(|(id, live)| live.name.as_ref().map(|name| title(name, id)))
+            .collect();
+        if shown.is_empty() {
+            let _ = reply.send(Reply::Refused(self.nothing_to_watch()));
+            return;
+        }
+        let waiting = self
+            .sessions
+            .iter()
+            .filter(|(_, live)| live.view == View::Refused)
+            .count();
+        let desktop = self.desktop.clone();
+        tokio::spawn(async move {
+            let answer = match desktop.show_views().await {
+                Ok(place) => Reply::Done(format!(
+                    "Showing {} on {place}.{}",
+                    and_list(&shown),
+                    not_shown(waiting)
+                )),
+                Err(e) => Reply::Refused(format!("Can't show the agents' screens: {e}.")),
+            };
+            let _ = reply.send(answer);
+        });
+    }
+
+    fn nothing_to_watch(&self) -> String {
+        if self.sessions.open_count() == 0 {
+            return "No agent is working, so there is nothing to watch.".to_owned();
+        }
+        let failed = self.sessions.iter().find_map(|(_, live)| match &live.view {
+            View::Failed(why) => Some(why.clone()),
+            _ => None,
+        });
+        match failed {
+            Some(why) => format!("No agent's screen can be shown: {why}."),
+            None => "No agent's screen is ready to watch yet.".to_owned(),
+        }
+    }
+}
+
+/// "a", "a and b", "a, b and c".
+fn and_list(items: &[String]) -> String {
+    match items {
+        [] => String::new(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
+}
+
+/// What the user isn't shown, if anything.
+fn not_shown(waiting: usize) -> String {
+    match waiting {
+        0 => String::new(),
+        1 => format!(" 1 more agent isn't shown: at most {LIMIT} are shown at once."),
+        n => format!(" {n} more agents aren't shown: at most {LIMIT} are shown at once."),
     }
 }

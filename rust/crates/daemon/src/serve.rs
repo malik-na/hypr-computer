@@ -15,6 +15,7 @@ use tokio_util::task::TaskTracker;
 use tools::Registry;
 use tracing::{info, warn};
 
+use crate::control;
 use crate::listen::Listening;
 use crate::mcp::SessionServer;
 use crate::owner::Owner;
@@ -34,17 +35,17 @@ pub async fn run(
     let Listening {
         listener,
         owned_path,
+        control,
+        control_path,
         ..
     } = listening;
-    listener
-        .set_nonblocking(true)
-        .map_err(|e| format!("can't use the socket: {e}"))?;
-    let listener = tokio::net::UnixListener::from_std(listener)
-        .map_err(|e| format!("can't use the socket: {e}"))?;
+    let listener = into_tokio(listener)?;
+    let control = into_tokio(control)?;
 
     let (owner, owner_task) = Owner::spawn(clock, screens, desktop);
     let registry = Arc::new(Registry::builtin());
     let sessions = TaskTracker::new();
+    let commands = tokio::spawn(control::serve(control, owner.clone()));
 
     loop {
         tokio::select! {
@@ -64,10 +65,11 @@ pub async fn run(
 
     info!("stopping");
     drop(listener);
-    if let Some(path) = owned_path
-        && let Err(e) = std::fs::remove_file(&path)
-    {
-        warn!("can't remove {}: {e}", path.display());
+    commands.abort();
+    for path in owned_path.iter().chain([&control_path]) {
+        if let Err(e) = std::fs::remove_file(path) {
+            warn!("can't remove {}: {e}", path.display());
+        }
     }
     sessions.close();
     if tokio::time::timeout(STOP_GRACE, sessions.wait())
@@ -90,6 +92,15 @@ pub async fn run(
     }
     info!("stopped");
     Ok(())
+}
+
+fn into_tokio(
+    listener: std::os::unix::net::UnixListener,
+) -> Result<tokio::net::UnixListener, String> {
+    listener
+        .set_nonblocking(true)
+        .and_then(|()| tokio::net::UnixListener::from_std(listener))
+        .map_err(|e| format!("can't use the socket: {e}"))
 }
 
 /// Starts handling SIGTERM and SIGINT, which cancel the returned token. It

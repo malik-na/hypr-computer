@@ -2,6 +2,7 @@
 //! its socket is one agent session speaking MCP. See docs/design.md.
 #![forbid(unsafe_code)]
 
+mod control;
 mod listen;
 mod mcp;
 mod owner;

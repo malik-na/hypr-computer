@@ -8,6 +8,7 @@
 use std::future::Future;
 use std::sync::Arc;
 
+use domain::control::Reply;
 use domain::lifecycle::{Effect, Event, SessionState};
 use domain::{EndReason, SessionId, Sessions};
 use ports::{BoxFuture, Clock, Desktop, Screen, ScreenProcess, Screens};
@@ -26,6 +27,8 @@ enum Msg {
     Disconnect(SessionId, EndReason),
     ToolCall(SessionId, oneshot::Sender<Admission>),
     Screen(SessionId, News),
+    /// `hypr-computer watch`.
+    Watch(oneshot::Sender<Reply>),
     Stop,
 }
 
@@ -93,6 +96,14 @@ impl Owner {
             reason: EndReason::Disconnected,
             tx: self.tx.clone(),
         })
+    }
+
+    /// `hypr-computer watch`: takes the user to the live views. `None` only
+    /// if the owner has stopped.
+    pub async fn watch(&self) -> Option<Reply> {
+        let (reply, answer) = oneshot::channel();
+        self.tx.send(Msg::Watch(reply)).ok()?;
+        answer.await.ok()
     }
 
     /// No more sessions will open: the owner ends once the last one is gone.
@@ -179,6 +190,7 @@ async fn run(mut rx: mpsc::UnboundedReceiver<Msg>, mut state: State) {
                 let _ = reply.send(state.tool_call(id));
             }
             Msg::Screen(id, news) => state.news(id, news),
+            Msg::Watch(reply) => state.watch(reply),
             Msg::Stop => stopping = true,
         }
         if stopping && state.sessions.open_count() == 0 {

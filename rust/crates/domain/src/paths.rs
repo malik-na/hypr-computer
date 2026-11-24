@@ -9,6 +9,9 @@ use std::path::{Path, PathBuf};
 pub const DIR_NAME: &str = "hypr-computer";
 /// The socket's file name inside [`DIR_NAME`].
 pub const SOCKET_NAME: &str = "daemon.sock";
+/// The file name of the socket the `hypr-computer` commands use, inside
+/// [`DIR_NAME`].
+pub const CONTROL_NAME: &str = "control.sock";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RuntimeDirError {
@@ -48,6 +51,12 @@ pub fn daemon_dir(runtime_dir: Option<&OsStr>) -> Result<PathBuf, RuntimeDirErro
 /// The daemon's socket, given the value of `$XDG_RUNTIME_DIR`.
 pub fn daemon_socket(runtime_dir: Option<&OsStr>) -> Result<PathBuf, RuntimeDirError> {
     Ok(daemon_dir(runtime_dir)?.join(SOCKET_NAME))
+}
+
+/// The socket the `hypr-computer` commands use, given the value of
+/// `$XDG_RUNTIME_DIR`.
+pub fn control_socket(runtime_dir: Option<&OsStr>) -> Result<PathBuf, RuntimeDirError> {
+    Ok(daemon_dir(runtime_dir)?.join(CONTROL_NAME))
 }
 
 /// The user's desktop's Wayland socket, given the values of
