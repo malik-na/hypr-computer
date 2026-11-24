@@ -49,16 +49,6 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let listening = match listen::listen(&mut fds, std::env::var_os("XDG_RUNTIME_DIR").as_deref()) {
-        Ok(l) => l,
-        Err(e) => {
-            eprintln!("hypr-computer-daemon: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
-    info!("{}", listening.describe());
-    let screens = Arc::new(ScreenProcesses::new(program, listening.dir.clone()));
-
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -69,7 +59,26 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    match runtime.block_on(serve::run(listening, Arc::new(SystemClock), screens)) {
+    // Before the socket exists: from then on, anyone can signal us.
+    let _in_runtime = runtime.enter();
+    let stop = match serve::watch_signals() {
+        Ok(stop) => stop,
+        Err(e) => {
+            eprintln!("hypr-computer-daemon: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let listening = match listen::listen(&mut fds, std::env::var_os("XDG_RUNTIME_DIR").as_deref()) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("hypr-computer-daemon: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    info!("{}", listening.describe());
+    let screens = Arc::new(ScreenProcesses::new(program, listening.dir.clone()));
+
+    match runtime.block_on(serve::run(listening, Arc::new(SystemClock), screens, stop)) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("hypr-computer-daemon: {e}");
