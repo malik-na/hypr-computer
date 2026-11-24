@@ -145,6 +145,11 @@ expect_liveness  TakeOver         AdmitWhileTaking             TakeOverTakesEffe
 expect_invariant TakeOver         EscapeForgetsWaitingCall     WaitingOnlyWhileTakenOver
 expect_invariant TakeOver         ClipboardKeptOnHandBack      ClipboardOnlyDuringTakeOver
 expect_invariant TakeOver         EndKeepsTakeOver             EndedSessionLeavesNothing
+expect_pass      Notice
+expect_invariant Notice           CloseOnEnd                   NoNoticeOutlivesItsSession
+expect_invariant Notice           ForgetLateAnswer             NoNoticeOutlivesItsSession
+expect_liveness  Notice           WaitForever                  UserIsTold
+expect_invariant Notice           StopStopsAll                 StopOnlyItsOwn
 
 heading "Summary"
 printf '%s' "$summary"

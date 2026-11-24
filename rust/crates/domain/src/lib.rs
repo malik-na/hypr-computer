@@ -7,6 +7,7 @@
 
 pub mod control;
 pub mod lifecycle;
+pub mod notice;
 pub mod paths;
 pub mod session;
 pub mod stop;
