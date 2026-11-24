@@ -37,6 +37,9 @@ const NAMES: &[&str] = &[
 ];
 /// How long a page may take to load before `open_url` stops waiting.
 const LOAD_TIME: Duration = Duration::from_secs(20);
+/// How long a browser that is slow to start may take to show its first
+/// window, on top of the wait for any app's.
+const FIRST_WINDOW_TIME: Duration = Duration::from_secs(30);
 /// How long a loaded page may take to paint two frames.
 const PAINT_TIME: Duration = Duration::from_secs(2);
 /// The page the browser starts on. Not `about:blank`: on that, Chromium puts
@@ -53,6 +56,9 @@ pub(crate) struct Browser {
     tab: Option<Tab>,
     /// The start page is still in the history.
     start_page: bool,
+    /// How many windows the screen had when the browser started, until its
+    /// first window is on the screen.
+    no_window_yet: Option<u64>,
 }
 
 /// A page target, and the DevTools session attached to it.
@@ -84,6 +90,14 @@ impl ScreenChild {
                 .devtools
                 .call("Page.resetNavigationHistory", json!({}), Some(&tab.session))
                 .await?;
+        }
+        if let Some(before) = browser.no_window_yet.take() {
+            // A browser's first start from a cold disk can take half a
+            // minute to show its window; the page is on the screen only then.
+            let start = Instant::now();
+            while self.status().await?.windows <= before && start.elapsed() < FIRST_WINDOW_TIME {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
         }
         self.settled().await?;
         Ok(opened)
@@ -140,11 +154,13 @@ impl ScreenChild {
                 },
             ])
             .map_err(|e| ScreenError(format!("can't hand the browser its pipe: {e}")))?;
+        let before = self.status().await?.windows;
         match self.run_app(command).await {
-            Ok(Launched::Window { .. } | Launched::NoWindow { .. }) => Ok(Browser {
+            Ok(launched @ (Launched::Window { .. } | Launched::NoWindow { .. })) => Ok(Browser {
                 devtools,
                 tab: None,
                 start_page: true,
+                no_window_yet: matches!(launched, Launched::NoWindow { .. }).then_some(before),
             }),
             Ok(Launched::Exited { status, output, .. }) => Err(ScreenError(format!(
                 "the browser {shown} exited ({status}) before it opened a window: {output}"

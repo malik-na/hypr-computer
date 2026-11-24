@@ -82,4 +82,7 @@ jobs:
       # unprivileged user namespaces, which Ubuntu 24.04 restricts with
       # AppArmor ("No usable sandbox!"); allow them, rather than run it unsandboxed.
       - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      # Its first start from the runner's cold disk takes about 20 s, later
+      # ones about 1 s: start it once, so the tests' time limits measure ours.
+      - run: timeout 60 chromium --headless=new --dump-dom about:blank > /dev/null 2>&1 || true
       - run: cargo test --locked --workspace
