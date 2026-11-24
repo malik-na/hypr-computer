@@ -45,9 +45,13 @@ impl Hyprland {
                 if stream.read_to_string(&mut request).is_err() {
                     continue;
                 }
+                // Holding is meant for the view requests; the notice fallback (#29) is answered at once.
+                let notice = request.starts_with("/notify ");
                 recorded.lock().unwrap().push(request);
                 let (lock, released) = &*answering;
-                let answer = released.wait_while(lock.lock().unwrap(), |a| a.1).unwrap();
+                let answer = released
+                    .wait_while(lock.lock().unwrap(), |a| a.1 && !notice)
+                    .unwrap();
                 let _ = stream.write_all(answer.0.as_bytes());
             }
         });
@@ -72,6 +76,30 @@ impl Hyprland {
     /// Every request it got, oldest first.
     pub fn requests(&self) -> Vec<String> {
         self.requests.lock().unwrap().clone()
+    }
+
+    // The daemon's notice fallback (#29) also talks to Hyprland, with `/notify` requests.
+    /// Every request it got except the `/notify` ones, oldest first.
+    pub fn view_requests(&self) -> Vec<String> {
+        let mut requests = self.requests();
+        requests.retain(|request| !request.starts_with("/notify "));
+        requests
+    }
+
+    /// Waits until it has had `n` requests other than `/notify` ones, and returns them all.
+    pub fn wait_for_view_requests(&self, n: usize) -> Vec<String> {
+        let end = Instant::now() + TIMEOUT;
+        loop {
+            let requests = self.view_requests();
+            if requests.len() >= n {
+                return requests;
+            }
+            assert!(
+                Instant::now() < end,
+                "wanted {n} view requests to Hyprland, got {requests:?}"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
     }
 
     /// Waits until it has had `n` requests, and returns them all.
