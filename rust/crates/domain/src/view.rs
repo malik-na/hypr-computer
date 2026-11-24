@@ -5,6 +5,9 @@ use crate::SessionId;
 /// The app id of every view's window, so the desktop can place them.
 pub const APP_ID: &str = "hypr-computer-view";
 
+/// How many views are shown at once, at most.
+pub const LIMIT: usize = 4;
+
 /// The longest agent name a view's title shows.
 const MAX_NAME: usize = 64;
 

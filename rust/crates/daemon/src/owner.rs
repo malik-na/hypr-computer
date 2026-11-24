@@ -257,6 +257,7 @@ impl State {
                 gone.lasted.as_secs_f64(),
                 self.sessions.open_count()
             );
+            self.show_waiting();
             return;
         }
         if stepped.effect == Some(Effect::Teardown)

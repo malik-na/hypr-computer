@@ -148,6 +148,11 @@ impl<T> Sessions<T> {
     pub fn open_count(&self) -> usize {
         self.open.len()
     }
+
+    /// Every session that isn't gone, oldest first, with the caller's data.
+    pub fn iter(&self) -> impl Iterator<Item = (SessionId, &T)> {
+        self.open.iter().map(|(id, open)| (*id, &open.data))
+    }
 }
 
 #[cfg(test)]
