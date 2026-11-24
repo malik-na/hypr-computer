@@ -527,7 +527,7 @@ d={d}
 printf '%s\\n' "$*" >> $d/notify.log
 case " $* " in *" --wait "*) ;; *) exit 0;; esac
 [ -e $d/no-service ] && exit 1
-[ -e $d/dead-bus ] && { echo 0; exec sleep 30; }  # as the real one does with no service to reach
+[ -e $d/dead-bus ] && {{ echo 0; exec sleep 30; }}  # as the real one does with no service to reach
 echo 7
 i=0; while [ ! -e $d/answer ] && [ $i -lt 400 ]; do sleep 0.02; i=$((i+1)); done
 cat $d/answer 2>/dev/null; rm -f $d/answer
