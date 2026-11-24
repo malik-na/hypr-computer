@@ -76,11 +76,11 @@ State 4: <ToolCall>
 
 ### Rust names
 
-The Rust state machine is one pure function, `step(state, event) -> (state, effects)`. It holds only `session`. The other variables are the world, as the adapters see it.
+The Rust state machine is one pure function, `domain::lifecycle::step(state, event) -> (state, Option<Effect>)`: each action emits at most one effect. It holds only `session`. The other variables are the world, as the adapters see it.
 
 | `session` in the spec | Rust |
 | --- | --- |
-| `"Absent"` | no entry for the session |
+| `"Absent"` | `SessionState::Absent`: the state a new session id starts in. A session that reaches it again is dropped; ids are never reused |
 | `"Starting"` | `SessionState::Starting` |
 | `"Verifying"` | `SessionState::Verifying` |
 | `"Ready"` | `SessionState::Ready` |
@@ -94,16 +94,16 @@ The Rust state machine is one pure function, `step(state, event) -> (state, effe
 | `ScreenReady` | `Event::ScreenReady`, sent only after the readiness check passed | `Verifying` → `Ready` | none |
 | `ScreenFailed` | `Event::ScreenFailed`: no start, or no pass, in time | `Starting`, `Verifying` → `TearingDown` | `Effect::Teardown` |
 | `ScreenCrashed` | `Event::ScreenCrashed`: the process exited on its own | `Starting`, `Verifying`, `Ready` → `TearingDown` | `Effect::Teardown` |
-| `ToolCall` | `Event::ToolCall` | `Ready` stays | `Effect::ServeToolCall` |
+| `ToolCall` | `Event::ToolCall` | `Ready` stays | `Effect::ServeToolCall`. In any other state, the state stays and the effect is `Effect::RejectToolCall` |
 | `Disconnect` | `Event::Disconnect` | `Starting`, `Verifying`, `Ready` → `TearingDown`. `TearingDown` stays | `Effect::Teardown`. None in `TearingDown` |
 | `ScreenStopped`, `AppsStopped` | none: the world. This is what `Effect::Teardown` does | | |
-| `TeardownDone` | `Event::TeardownDone`, sent only after the screen process and the apps are seen to be gone | `TearingDown` → none | `Effect::CloseConnection` |
+| `TeardownDone` | `Event::TeardownDone`, sent only after the screen process and the apps are seen to be gone | `TearingDown` → `Absent` | `Effect::CloseConnection`, harmless if the agent already disconnected |
 
 - `teardowns` counts `Effect::Teardown` per session.
 - An event that the spec doesn't allow in a state changes nothing and emits no effect, except a reply to the caller. Examples: `ToolCall` before `Ready` (`Effect::RejectToolCall`), `ScreenCrashed` during `TearingDown`, any event for a session that is gone.
 - `Effect::Teardown` must not depend on the screen process or the agent doing anything. That is the `CleanupDependsOnDyingProcess` bug.
 
-A follow-up PR property-tests `step` against the invariants above.
+`rust/crates/domain/tests/lifecycle_spec.rs` property-tests `step` against the invariants above, over random orders of events; it fails on both buggy variants when they are put back into `step`.
 
 ### Left out
 

@@ -5,6 +5,7 @@
 //! argument. `rust/tests/architecture.rs` enforces this.
 #![forbid(unsafe_code)]
 
+pub mod lifecycle;
 pub mod paths;
 pub mod session;
 
