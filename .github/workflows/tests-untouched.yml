@@ -3,6 +3,8 @@ name: tests-untouched
 # edit them to let itself through. It never runs code from the PR: it only reads the PR's commits with git.
 on:
   pull_request_target:
+    # `edited`: a fixed `Tests-From:` line in the body is checked again without a new push.
+    types: [opened, synchronize, reopened, edited]
 permissions:
   contents: read
 jobs:
