@@ -10,7 +10,8 @@
 //! - a window asking to be activated (xdg-activation) is reported to the fake.
 //!
 //! The test can read what a window shows, and send it the user's pointer and
-//! keys.
+//! keys: clicking a window gives it the keyboard, as Hyprland does, and keys
+//! go to the window with the keyboard.
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
@@ -28,7 +29,7 @@ use smithay::backend::renderer::element::surface::{
 use smithay::backend::renderer::pixman::PixmanRenderer;
 use smithay::backend::renderer::utils::{on_commit_buffer_handler, with_renderer_surface_state};
 use smithay::backend::renderer::{Bind, ExportMem, Offscreen};
-use smithay::desktop::Window;
+use smithay::desktop::{Window, WindowSurfaceType};
 use smithay::input::keyboard::{FilterResult, XkbConfig};
 use smithay::input::pointer::{AxisFrame, ButtonEvent, MotionEvent};
 use smithay::input::{Seat, SeatHandler, SeatState};
@@ -69,6 +70,42 @@ use super::hyprland::World;
 pub const TILE: (i32, i32) = (1280, 800);
 const FRAME: Duration = Duration::from_millis(16);
 
+/// A pointer button, as evdev numbers it.
+pub const BTN_LEFT: u32 = 0x110;
+pub const BTN_RIGHT: u32 = 0x111;
+
+/// The evdev code of a key the tests press, by its xkb name.
+fn key_code(name: &str) -> Result<u32, String> {
+    let code = match name {
+        "Escape" => 1,
+        "Return" => 28,
+        "Tab" => 15,
+        "space" => 57,
+        "BackSpace" => 14,
+        "ctrl" | "Control_L" => 29,
+        "shift" | "Shift_L" => 42,
+        "alt" | "Alt_L" => 56,
+        "a" => 30,
+        "b" => 48,
+        "c" => 46,
+        "d" => 32,
+        "e" => 18,
+        "h" => 35,
+        "i" => 23,
+        "k" => 37,
+        "o" => 24,
+        "q" => 16,
+        "v" => 47,
+        "x" => 45,
+        "z" => 44,
+        "1" => 2,
+        "2" => 3,
+        "3" => 4,
+        _ => return Err(format!("the host doesn't know the key {name:?}")),
+    };
+    Ok(code)
+}
+
 /// A window on the host, as the test sees it.
 #[derive(Clone, Debug)]
 pub struct HostWindow {
@@ -100,7 +137,10 @@ impl Picture {
 enum Command {
     Windows(mpsc::Sender<Vec<HostWindow>>),
     Capture(String, mpsc::Sender<Result<Picture, String>>),
-    UserInput(String, mpsc::Sender<Result<(), String>>),
+    UserInput(String, bool, mpsc::Sender<Result<(), String>>),
+    Click(String, (f64, f64), u32, mpsc::Sender<Result<(), String>>),
+    Hover(String, (f64, f64), mpsc::Sender<Result<(), String>>),
+    Keys(String, Vec<String>, mpsc::Sender<Result<(), String>>),
     Stop,
 }
 
@@ -154,7 +194,34 @@ impl Host {
     /// The user moves the pointer over the window, clicks, scrolls, and types
     /// into it.
     pub fn user_input(&self, address: &str) -> Result<(), String> {
-        self.ask(|tx| Command::UserInput(address.to_owned(), tx))
+        self.ask(|tx| Command::UserInput(address.to_owned(), true, tx))
+    }
+
+    /// As [`Host::user_input`], but without clicking: what a user does to a
+    /// view they only watch.
+    pub fn user_input_without_clicking(&self, address: &str) -> Result<(), String> {
+        self.ask(|tx| Command::UserInput(address.to_owned(), false, tx))
+    }
+
+    /// The user clicks `button` at `at` in the window (its own coordinates):
+    /// the pointer moves there, the window gets the keyboard, as Hyprland's
+    /// click to focus gives it, and the button goes down and up. The window
+    /// must be on the workspace shown.
+    pub fn click(&self, address: &str, at: (f64, f64), button: u32) -> Result<(), String> {
+        self.ask(|tx| Command::Click(address.to_owned(), at, button, tx))
+    }
+
+    /// The user moves the pointer to `at` in the window, without clicking.
+    pub fn hover(&self, address: &str, at: (f64, f64)) -> Result<(), String> {
+        self.ask(|tx| Command::Hover(address.to_owned(), at, tx))
+    }
+
+    /// The user presses each of `keys` in turn: a key's xkb name, or a
+    /// combination like `ctrl+v`. Keys go to the window with the keyboard,
+    /// which must be the one at `address`.
+    pub fn keys(&self, address: &str, keys: &[&str]) -> Result<(), String> {
+        let keys = keys.iter().map(|k| (*k).to_owned()).collect();
+        self.ask(|tx| Command::Keys(address.to_owned(), keys, tx))
     }
 }
 
@@ -338,8 +405,17 @@ impl State {
             Command::Capture(address, reply) => {
                 let _ = reply.send(self.capture(&address));
             }
-            Command::UserInput(address, reply) => {
-                let _ = reply.send(self.user_input(&address));
+            Command::UserInput(address, clicks, reply) => {
+                let _ = reply.send(self.user_input(&address, clicks));
+            }
+            Command::Click(address, at, button, reply) => {
+                let _ = reply.send(self.click(&address, at, button));
+            }
+            Command::Hover(address, at, reply) => {
+                let _ = reply.send(self.hover(&address, at));
+            }
+            Command::Keys(address, keys, reply) => {
+                let _ = reply.send(self.press_keys(&address, &keys));
             }
             Command::Stop => self.signal.stop(),
         }
@@ -445,7 +521,7 @@ impl State {
         })
     }
 
-    fn user_input(&mut self, address: &str) -> Result<(), String> {
+    fn user_input(&mut self, address: &str, clicks: bool) -> Result<(), String> {
         let surface = self.win(address)?.toplevel.wl_surface().clone();
         let size = self.win(address)?.window.geometry().size;
         let (w, h) = (f64::from(size.w.max(1)), f64::from(size.h.max(1)));
@@ -461,7 +537,8 @@ impl State {
             pointer.motion(self, focus.clone(), &event);
             pointer.frame(self);
         }
-        for button in [0x110, 0x111, 0x110] {
+        let buttons: &[u32] = if clicks { &[0x110, 0x111, 0x110] } else { &[] };
+        for &button in buttons {
             for pressed in [ButtonState::Pressed, ButtonState::Released] {
                 let event = ButtonEvent {
                     serial: SERIAL_COUNTER.next_serial(),
@@ -502,6 +579,92 @@ impl State {
         };
         pointer.motion(self, None, &event);
         pointer.frame(self);
+        Ok(())
+    }
+
+    /// Moves the pointer to `at` in the window, onto the surface there.
+    fn pointer_to(&mut self, address: &str, at: (f64, f64)) -> Result<(), String> {
+        let w = self.win(address)?;
+        if !self.world.lock().unwrap().is_visible(address) {
+            return Err(format!("{address} isn't on the workspace shown"));
+        }
+        let geometry = w.window.geometry();
+        let point = (
+            at.0 + f64::from(geometry.loc.x),
+            at.1 + f64::from(geometry.loc.y),
+        );
+        let focus = w
+            .window
+            .surface_under(point, WindowSurfaceType::ALL)
+            .map(|(surface, loc)| (surface, (loc - geometry.loc).to_f64()));
+        if focus.is_none() {
+            return Err(format!("nothing of {address} is at {at:?}"));
+        }
+        let pointer = self.seat.get_pointer().ok_or("no pointer")?;
+        let event = MotionEvent {
+            location: at.into(),
+            serial: SERIAL_COUNTER.next_serial(),
+            time: self.time(),
+        };
+        pointer.motion(self, focus, &event);
+        pointer.frame(self);
+        Ok(())
+    }
+
+    fn hover(&mut self, address: &str, at: (f64, f64)) -> Result<(), String> {
+        self.pointer_to(address, at)
+    }
+
+    fn click(&mut self, address: &str, at: (f64, f64), button: u32) -> Result<(), String> {
+        self.pointer_to(address, at)?;
+        if self.world.lock().unwrap().user_clicks(address) {
+            let surface = self.win(address)?.toplevel.wl_surface().clone();
+            let keyboard = self.seat.get_keyboard().ok_or("no keyboard")?;
+            if keyboard.current_focus().as_ref() != Some(&surface) {
+                keyboard.set_focus(self, Some(surface), SERIAL_COUNTER.next_serial());
+            }
+        }
+        let pointer = self.seat.get_pointer().ok_or("no pointer")?;
+        for state in [ButtonState::Pressed, ButtonState::Released] {
+            let event = ButtonEvent {
+                serial: SERIAL_COUNTER.next_serial(),
+                time: self.time(),
+                button,
+                state,
+            };
+            pointer.button(self, &event);
+            pointer.frame(self);
+        }
+        Ok(())
+    }
+
+    fn press_keys(&mut self, address: &str, keys: &[String]) -> Result<(), String> {
+        let surface = self.win(address)?.toplevel.wl_surface().clone();
+        let keyboard = self.seat.get_keyboard().ok_or("no keyboard")?;
+        if keyboard.current_focus().as_ref() != Some(&surface) {
+            return Err(format!(
+                "{address} doesn't have the keyboard: click it first"
+            ));
+        }
+        for combo in keys {
+            let codes = combo
+                .split('+')
+                .map(key_code)
+                .collect::<Result<Vec<_>, _>>()?;
+            let order = codes.iter().map(|c| (*c, KeyState::Pressed));
+            let back = codes.iter().rev().map(|c| (*c, KeyState::Released));
+            for (code, state) in order.chain(back) {
+                let time = self.time();
+                keyboard.input::<(), _>(
+                    self,
+                    (code + 8).into(),
+                    state,
+                    SERIAL_COUNTER.next_serial(),
+                    time,
+                    |_, _, _| FilterResult::Forward,
+                );
+            }
+        }
         Ok(())
     }
 

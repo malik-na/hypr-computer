@@ -1,5 +1,6 @@
 //! The live view is watch-only: the user's pointer and keys on it never reach
-//! the agent's apps, and change nothing on the agent's screen (#27).
+//! the agent's apps, and change nothing on the agent's screen (#27), until
+//! the user clicks into it to take it over (#30, tests/takeover_*_spec.rs).
 #![forbid(unsafe_code)]
 
 mod support;
@@ -19,7 +20,7 @@ const COLOURS: Quadrants = [
 ];
 
 #[test]
-fn the_users_pointer_and_keys_on_the_view_never_reach_the_agents_app() {
+fn the_users_pointer_and_keys_on_the_view_never_reach_the_agents_app_without_a_click() {
     let desk = Desktop::new();
     let daemon = desk.start_daemon();
     let mut agent = desk.agent("watched-agent");
@@ -33,7 +34,7 @@ fn the_users_pointer_and_keys_on_the_view_never_reach_the_agents_app() {
     let events_before = app.events();
 
     desk.host
-        .user_input(&address)
+        .user_input_without_clicking(&address)
         .unwrap_or_else(|e| panic!("{e}\n{}", desk.report(&daemon)));
     thread::sleep(Duration::from_millis(500));
 
