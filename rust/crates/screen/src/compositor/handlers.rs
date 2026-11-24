@@ -133,8 +133,9 @@ impl XdgShellHandler for State {
         surface.send_repositioned(token);
     }
 
-    /// Popup grabs take input, and the screen has none yet.
-    fn grab(&mut self, _surface: PopupSurface, _seat: wl_seat::WlSeat, _serial: Serial) {}
+    fn grab(&mut self, surface: PopupSurface, seat: wl_seat::WlSeat, serial: Serial) {
+        self.grab_for_popup(surface, &seat, serial);
+    }
 }
 
 impl State {

@@ -15,6 +15,12 @@ pub struct Pointer {
     moved: bool,
 }
 
+impl Pointer {
+    pub fn at(&self) -> (f64, f64) {
+        self.at
+    }
+}
+
 impl Dispatch<wl_pointer::WlPointer, ()> for App {
     fn event(
         app: &mut Self,
@@ -22,7 +28,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for App {
         event: wl_pointer::Event,
         _: &(),
         _: &Connection,
-        _: &QueueHandle<Self>,
+        qh: &QueueHandle<Self>,
     ) {
         let logged = match event {
             wl_pointer::Event::Enter {
@@ -41,12 +47,20 @@ impl Dispatch<wl_pointer::WlPointer, ()> for App {
                 app.pointer.at = (surface_x, surface_y);
                 json!({"event": "motion", "x": surface_x, "y": surface_y})
             }
-            wl_pointer::Event::Button { button, state, .. } => {
+            wl_pointer::Event::Button {
+                serial,
+                button,
+                state,
+                ..
+            } => {
                 let (x, y) = app.pointer.at;
                 let state = match state {
                     WEnum::Value(wl_pointer::ButtonState::Pressed) => "down",
                     _ => "up",
                 };
+                if button == RIGHT && state == "down" {
+                    app.open_menu(qh, serial);
+                }
                 json!({"event": "button", "button": button_name(button), "state": state, "x": x, "y": y})
             }
             wl_pointer::Event::AxisValue120 { axis, value120 } => {
@@ -70,6 +84,8 @@ impl Dispatch<wl_pointer::WlPointer, ()> for App {
         }
     }
 }
+
+const RIGHT: u32 = 0x111;
 
 fn button_name(button: u32) -> Value {
     match button {

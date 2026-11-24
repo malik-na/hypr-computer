@@ -1,14 +1,20 @@
 //! The screen's seat: the agent's own pointer and keyboard, which only the
 //! daemon drives. The user's have no way in: there is no input device. The
-//! keyboard goes to the window on the screen.
+//! keyboard goes to the window on the screen, or to its open menu.
 
 use smithay::backend::renderer::utils::with_renderer_surface_state;
 use smithay::delegate_seat;
+use smithay::desktop::{
+    PopupKeyboardGrab, PopupKind, PopupPointerGrab, PopupUngrabStrategy, find_popup_root_surface,
+};
 use smithay::input::keyboard::XkbConfig;
+use smithay::input::pointer::Focus;
 use smithay::input::{Seat, SeatHandler, SeatState};
 use smithay::reexports::wayland_server::DisplayHandle;
+use smithay::reexports::wayland_server::protocol::wl_seat::WlSeat;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
-use smithay::utils::SERIAL_COUNTER;
+use smithay::utils::{SERIAL_COUNTER, Serial};
+use smithay::wayland::shell::xdg::PopupSurface;
 
 use crate::state::State;
 
@@ -58,6 +64,41 @@ impl State {
             && keyboard.current_focus() != surface
         {
             keyboard.set_focus(self, surface, SERIAL_COUNTER.next_serial());
+        }
+    }
+}
+
+impl State {
+    /// An app's menu asks for the keyboard and pointer (`xdg_popup.grab`):
+    /// keys go to the menu until it closes. Refused, and the menu closed, if
+    /// something else holds them.
+    pub fn grab_for_popup(&mut self, popup: PopupSurface, seat: &WlSeat, serial: Serial) {
+        let Some(seat) = Seat::<State>::from_resource(seat) else {
+            return;
+        };
+        let popup = PopupKind::Xdg(popup);
+        let Ok(root) = find_popup_root_surface(&popup) else {
+            return;
+        };
+        let Ok(mut grab) = self.popups.grab_popup(root, popup, &seat, serial) else {
+            return;
+        };
+        let previous = grab.previous_serial().unwrap_or(serial);
+        if let Some(keyboard) = seat.get_keyboard() {
+            if keyboard.is_grabbed() && !(keyboard.has_grab(serial) || keyboard.has_grab(previous))
+            {
+                grab.ungrab(PopupUngrabStrategy::All);
+                return;
+            }
+            keyboard.set_focus(self, grab.current_grab(), serial);
+            keyboard.set_grab(self, PopupKeyboardGrab::new(&grab), serial);
+        }
+        if let Some(pointer) = seat.get_pointer() {
+            if pointer.is_grabbed() && !(pointer.has_grab(serial) || pointer.has_grab(previous)) {
+                grab.ungrab(PopupUngrabStrategy::All);
+                return;
+            }
+            pointer.set_grab(self, PopupPointerGrab::new(&grab), serial, Focus::Keep);
         }
     }
 }

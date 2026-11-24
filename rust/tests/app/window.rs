@@ -15,10 +15,11 @@ use crate::App;
 
 pub struct Window {
     pub surface: wl_surface::WlSurface,
-    shm: wl_shm::WlShm,
-    wm: xdg_wm_base::XdgWmBase,
+    pub compositor: wl_compositor::WlCompositor,
+    pub wm: xdg_wm_base::XdgWmBase,
+    pub shm: wl_shm::WlShm,
     /// Its xdg-shell roles, once it is open.
-    xdg: Option<(xdg_surface::XdgSurface, xdg_toplevel::XdgToplevel)>,
+    pub xdg: Option<(xdg_surface::XdgSurface, xdg_toplevel::XdgToplevel)>,
     /// The size the screen asked for, once it did.
     size: Option<(i32, i32)>,
     configured: bool,
@@ -32,8 +33,9 @@ impl Window {
         let surface = compositor.create_surface(qh, ());
         Ok(Window {
             surface,
-            shm,
+            compositor,
             wm,
+            shm,
             xdg: None,
             size: None,
             configured: false,
@@ -60,34 +62,45 @@ impl Window {
         top: [u8; 3],
         bottom: [u8; 3],
     ) -> Result<(), Box<dyn Error>> {
-        let (width, height) = self.size.ok_or("the screen gave no size")?;
-        let mut pixels = Vec::with_capacity((width * height * 4) as usize);
-        for y in 0..height {
-            let [r, g, b] = if y < height / 2 { top } else { bottom };
-            for _ in 0..width {
-                pixels.extend([b, g, r, 0xff]); // XRGB8888, little-endian
-            }
-        }
-        let mut file = tempfile::tempfile()?;
-        file.write_all(&pixels)?;
-        let pool = self
-            .shm
-            .create_pool(file.as_fd(), i32::try_from(pixels.len())?, qh, ());
-        let buffer = pool.create_buffer(
-            0,
-            width,
-            height,
-            width * 4,
-            wl_shm::Format::Xrgb8888,
-            qh,
-            (),
-        );
-        pool.destroy();
-        self.surface.attach(Some(&buffer), 0, 0);
-        self.surface.damage_buffer(0, 0, width, height);
-        self.surface.commit();
-        Ok(())
+        let size = self.size.ok_or("the screen gave no size")?;
+        paint(&self.shm, &self.surface, size, top, bottom, qh)
     }
+}
+
+/// Paints `surface`, `width` by `height`: its top half `top`, its bottom half
+/// `bottom`.
+pub fn paint(
+    shm: &wl_shm::WlShm,
+    surface: &wl_surface::WlSurface,
+    (width, height): (i32, i32),
+    top: [u8; 3],
+    bottom: [u8; 3],
+    qh: &QueueHandle<App>,
+) -> Result<(), Box<dyn Error>> {
+    let mut pixels = Vec::with_capacity((width * height * 4) as usize);
+    for y in 0..height {
+        let [r, g, b] = if y < height / 2 { top } else { bottom };
+        for _ in 0..width {
+            pixels.extend([b, g, r, 0xff]); // XRGB8888, little-endian
+        }
+    }
+    let mut file = tempfile::tempfile()?;
+    file.write_all(&pixels)?;
+    let pool = shm.create_pool(file.as_fd(), i32::try_from(pixels.len())?, qh, ());
+    let buffer = pool.create_buffer(
+        0,
+        width,
+        height,
+        width * 4,
+        wl_shm::Format::Xrgb8888,
+        qh,
+        (),
+    );
+    pool.destroy();
+    surface.attach(Some(&buffer), 0, 0);
+    surface.damage_buffer(0, 0, width, height);
+    surface.commit();
+    Ok(())
 }
 
 impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for App {

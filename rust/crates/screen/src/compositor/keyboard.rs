@@ -181,7 +181,12 @@ fn key_named(name: &str, combo: &str) -> Result<Keysym, String> {
     }
     let mut chars = name.chars();
     if let (Some(c), None) = (chars.next(), chars.next()) {
-        return Ok(xkb::utf32_to_keysym(u32::from(c.to_ascii_lowercase())));
+        let mut lower = c.to_lowercase();
+        let c = match (lower.next(), lower.next()) {
+            (Some(lower), None) => lower,
+            _ => c,
+        };
+        return Ok(xkb::utf32_to_keysym(u32::from(c)));
     }
     for flags in [xkb::KEYSYM_NO_FLAGS, xkb::KEYSYM_CASE_INSENSITIVE] {
         let sym = xkb::keysym_from_name(name, flags);

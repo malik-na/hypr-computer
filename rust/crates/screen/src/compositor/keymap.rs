@@ -26,9 +26,9 @@ pub struct Key {
 
 pub struct Keymap {
     context: xkb::Context,
-    us: xkb::Keymap,
+    us: Compiled,
     /// The keymap the seat has: the US layout plus `added`.
-    current: xkb::Keymap,
+    current: Compiled,
     added: Vec<Keysym>,
     /// The names of the keys the US layout leaves unused, for `added`.
     spare: Vec<String>,
@@ -39,18 +39,20 @@ pub struct Keymap {
 impl Keymap {
     pub fn us() -> Result<Keymap, String> {
         let context = xkb::Context::new(xkb::CONTEXT_NO_ENVIRONMENT_NAMES);
-        let us = compile(&context, &source(&[], &[]))?;
-        let spare = (us.min_keycode().raw()..=us.max_keycode().raw().min(LAST_X11_KEYCODE))
+        let us = Compiled::new(&context, &source(&[], &[]))?;
+        let keymap = &us.keymap;
+        let spare = (keymap.min_keycode().raw()..=keymap.max_keycode().raw().min(LAST_X11_KEYCODE))
             .map(Keycode::new)
-            .filter(|code| us.num_layouts_for_key(*code) == 0)
-            .filter_map(|code| us.key_get_name(code).map(str::to_owned))
+            .filter(|code| keymap.num_layouts_for_key(*code) == 0)
+            .filter_map(|code| keymap.key_get_name(code).map(str::to_owned))
             .collect();
-        let shift = find(&us, Keysym::from(xkb::keysyms::KEY_Shift_L))
+        let shift = us
+            .find(Keysym::from(xkb::keysyms::KEY_Shift_L))
             .ok_or("the US keymap has no Shift key")?
             .code;
         Ok(Keymap {
+            current: Compiled::new(&context, &source(&[], &[]))?,
             context,
-            current: us.clone(),
             us,
             added: Vec::new(),
             spare,
@@ -65,11 +67,11 @@ impl Keymap {
 
     /// The key that types `sym` in the keymap the seat has now.
     pub fn find(&self, sym: Keysym) -> Option<Key> {
-        find(&self.current, sym)
+        self.current.find(sym)
     }
 
     pub fn on_us_keyboard(&self, sym: Keysym) -> bool {
-        find(&self.us, sym).is_some()
+        self.us.find(sym).is_some()
     }
 
     /// How many symbols a keymap can add to the US layout.
@@ -85,7 +87,7 @@ impl Keymap {
             return Ok(false);
         }
         let text = source(syms, &self.spare);
-        self.current = compile(&self.context, &text)?;
+        self.current = Compiled::new(&self.context, &text)?;
         self.added = syms.to_vec();
         Ok(true)
     }
@@ -106,23 +108,44 @@ fn source(added: &[Keysym], spare: &[String]) -> String {
     format!("xkb_keymap {{\n    {US_LAYOUT}{keys}\n    }};\n}};\n")
 }
 
-fn compile(context: &xkb::Context, text: &str) -> Result<xkb::Keymap, String> {
-    xkb::Keymap::new_from_string(
-        context,
-        text.to_owned(),
-        xkb::KEYMAP_FORMAT_TEXT_V1,
-        xkb::KEYMAP_COMPILE_NO_FLAGS,
-    )
-    .ok_or_else(|| "can't compile the keymap: are xkeyboard-config's files installed?".to_owned())
+/// A keymap, and what its keys type with and without Shift.
+struct Compiled {
+    keymap: xkb::Keymap,
+    plain: xkb::State,
+    shifted: xkb::State,
 }
 
-/// The key that types `sym` in `keymap`: one without Shift if there is one.
-fn find(keymap: &xkb::Keymap, sym: Keysym) -> Option<Key> {
-    let codes = keymap.min_keycode().raw()..=keymap.max_keycode().raw();
-    [false, true].into_iter().find_map(|shift| {
-        codes.clone().map(Keycode::new).find_map(|code| {
-            let syms = keymap.key_get_syms_by_level(code, 0, u32::from(shift));
-            (syms == [sym]).then_some(Key { code, shift })
+impl Compiled {
+    fn new(context: &xkb::Context, text: &str) -> Result<Compiled, String> {
+        let keymap = xkb::Keymap::new_from_string(
+            context,
+            text.to_owned(),
+            xkb::KEYMAP_FORMAT_TEXT_V1,
+            xkb::KEYMAP_COMPILE_NO_FLAGS,
+        )
+        .ok_or("can't compile the keymap: are xkeyboard-config's files installed?")?;
+        let plain = xkb::State::new(&keymap);
+        let mut shifted = xkb::State::new(&keymap);
+        let shift = 1 << keymap.mod_get_index(xkb::MOD_NAME_SHIFT);
+        shifted.update_mask(shift, 0, 0, 0, 0, 0);
+        Ok(Compiled {
+            keymap,
+            plain,
+            shifted,
         })
-    })
+    }
+
+    /// The key that types `sym`, by itself if one does, or with Shift.
+    /// Some keys' second symbol needs another modifier (Pause's Break needs
+    /// Ctrl): those don't count.
+    fn find(&self, sym: Keysym) -> Option<Key> {
+        let codes = self.keymap.min_keycode().raw()..=self.keymap.max_keycode().raw();
+        [(false, &self.plain), (true, &self.shifted)]
+            .into_iter()
+            .find_map(|(shift, state)| {
+                codes.clone().map(Keycode::new).find_map(|code| {
+                    (state.key_get_syms(code) == [sym]).then_some(Key { code, shift })
+                })
+            })
+    }
 }

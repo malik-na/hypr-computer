@@ -221,6 +221,9 @@ fn key_presses_a_combination_and_lets_go_of_it() {
         ("CTRL+L", "ctrl+l"),
         ("Page_Down", "Next"),
         ("ctrl+/", "ctrl+slash"),
+        // Keys a US keyboard has only with other modifiers, or not at all.
+        ("ctrl+Break", "ctrl+Break"),
+        ("ctrl+Ä", "ctrl+adiaeresis"),
     ] {
         let before = keys(&log).len();
         act(&mut agent, "key", json!({"keys": combo}));
@@ -247,4 +250,22 @@ fn an_unknown_key_is_refused_and_nothing_is_pressed() {
         ["x"],
         "something was pressed before the refusal"
     );
+}
+
+#[test]
+fn an_open_menu_gets_the_keys() {
+    let env = Env::new();
+    let _daemon = Daemon::start(&env);
+    let (mut agent, log) = agent_with_app(&env);
+
+    // The app opens a menu on a right click, as apps do.
+    act(
+        &mut agent,
+        "click",
+        json!({"x": 200, "y": 200, "button": "right"}),
+    );
+    log.wait_for("menu");
+    act(&mut agent, "key", json!({"keys": "Down"}));
+    let key = log.events().into_iter().rfind(|e| e["event"] == "key");
+    assert_eq!(key.unwrap()["on"], "menu", "the menu didn't get the key");
 }
