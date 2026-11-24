@@ -6,11 +6,16 @@ use std::sync::Arc;
 use ports::{BoxFuture, Png, Screen};
 use serde_json::{Map, Value};
 
-use crate::{launch_app, screenshot};
+use crate::{click, launch_app, r#move, screenshot};
 
 /// Every tool, one line each: `&screenshot::Screenshot,`. A tool's file is
 /// `src/<name>.rs` and its `mod` line is in `lib.rs`.
-const TOOLS: &[&dyn Tool] = &[&screenshot::Screenshot, &launch_app::LaunchApp];
+const TOOLS: &[&dyn Tool] = &[
+    &screenshot::Screenshot,
+    &launch_app::LaunchApp,
+    &click::Click,
+    &r#move::Move,
+];
 
 /// One MCP tool. Private to this crate: callers go through [`Registry::call`].
 pub(crate) trait Tool: Send + Sync {
@@ -138,7 +143,7 @@ impl Registry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ports::{AppCommand, Launched, ScreenError};
+    use ports::{Action, AppCommand, Launched, ScreenError};
     use std::collections::HashSet;
 
     /// A session whose screen is ready, or isn't.
@@ -149,6 +154,9 @@ mod tests {
     impl Screen for Blank {
         fn screenshot(&self) -> BoxFuture<'_, Result<Png, ScreenError>> {
             Box::pin(async { Ok(Png(Vec::new())) })
+        }
+        fn act(&self, _action: Action) -> BoxFuture<'_, Result<(), ScreenError>> {
+            Box::pin(async { Err(ScreenError("blank".into())) })
         }
         fn launch(&self, _app: AppCommand) -> BoxFuture<'_, Result<Launched, ScreenError>> {
             Box::pin(async { Err(ScreenError("blank".into())) })

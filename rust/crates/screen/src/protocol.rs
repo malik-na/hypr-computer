@@ -15,6 +15,10 @@
 //! Pipes, not a socket: nothing but the daemon can reach the screen this way,
 //! and there is no file to clean up.
 
+use std::time::Duration;
+
+use ports::{Action, Button, Point};
+
 /// The screen's first line.
 pub const READY: &str = "ready";
 
@@ -25,6 +29,8 @@ pub enum Request {
     Screenshot,
     /// The screen's [`Status`].
     Status,
+    /// Do this with the pointer or keyboard; answered with [`Reply::Done`].
+    Act(Action),
     /// Start a program with these arguments, its output going to
     /// [`app_log`]`(n)`. Answered with its pid.
     Launch {
@@ -52,6 +58,10 @@ impl Request {
                 format!("launch {n} {argv}\n")
             }
             Request::App(pid) => format!("app {pid}\n"),
+            Request::Act(Action::Move(to)) => format!("move {} {}\n", to.x, to.y),
+            Request::Act(Action::Click { at, button, count }) => {
+                format!("click {} {} {} {count}\n", at.x, at.y, button.name())
+            }
         }
     }
 
@@ -71,9 +81,33 @@ impl Request {
                 })
             }
             ("app", pid) => pid.parse().ok().map(Request::App),
+            ("move", _) => {
+                let [x, y] = words(rest)?;
+                Some(Request::Act(Action::Move(point(x, y)?)))
+            }
+            ("click", _) => {
+                let [x, y, button, count] = words(rest)?;
+                Some(Request::Act(Action::Click {
+                    at: point(x, y)?,
+                    button: Button::from_name(button)?,
+                    count: count.parse().ok()?,
+                }))
+            }
             _ => None,
         }
     }
+}
+
+/// Exactly `N` words.
+fn words<const N: usize>(text: &str) -> Option<[&str; N]> {
+    text.split(' ').collect::<Vec<_>>().try_into().ok()
+}
+
+fn point(x: &str, y: &str) -> Option<Point> {
+    Some(Point {
+        x: x.parse().ok()?,
+        y: y.parse().ok()?,
+    })
 }
 
 /// What has happened on a screen so far.
@@ -81,6 +115,12 @@ impl Request {
 pub struct Status {
     /// How many app windows have drawn their first picture.
     pub windows: u64,
+    /// How many times apps have drawn (committed a surface).
+    pub commits: u64,
+    /// How long since an app last drew.
+    pub idle: Duration,
+    /// Whether the app on the screen may not have read all the input yet.
+    pub unread: bool,
 }
 
 /// The line that starts a reply.
@@ -89,6 +129,10 @@ pub enum Reply {
     /// A PNG of this many bytes follows.
     Png(usize),
     Status(Status),
+    /// The action is done: the app has the input. The number is
+    /// [`Status::commits`] at that moment, to tell when the app has drawn its
+    /// response.
+    Done(u64),
     /// The app started, with this pid.
     Launched(u32),
     /// The app hasn't ended.
@@ -103,7 +147,17 @@ impl Reply {
     pub fn line(&self) -> String {
         match self {
             Reply::Png(len) => format!("png {len}\n"),
-            Reply::Status(Status { windows }) => format!("status {windows}\n"),
+            Reply::Status(Status {
+                windows,
+                commits,
+                idle,
+                unread,
+            }) => format!(
+                "status {windows} {commits} {} {}\n",
+                idle.as_millis(),
+                u8::from(*unread)
+            ),
+            Reply::Done(commits) => format!("done {commits}\n"),
             Reply::Launched(pid) => format!("launched {pid}\n"),
             Reply::Running => "running\n".to_owned(),
             Reply::Ended(status) => format!("ended {}\n", status.replace('\n', " ")),
@@ -116,9 +170,16 @@ impl Reply {
         let (word, rest) = line.split_once(' ').unwrap_or((line, ""));
         match word {
             "png" => rest.parse().ok().map(Reply::Png),
-            "status" => Some(Reply::Status(Status {
-                windows: rest.parse().ok()?,
-            })),
+            "status" => {
+                let [windows, commits, idle, unread] = words(rest)?;
+                Some(Reply::Status(Status {
+                    windows: windows.parse().ok()?,
+                    commits: commits.parse().ok()?,
+                    idle: Duration::from_millis(idle.parse().ok()?),
+                    unread: unread == "1",
+                }))
+            }
+            "done" => rest.parse().ok().map(Reply::Done),
             "launched" => rest.parse().ok().map(Reply::Launched),
             "running" => Some(Reply::Running),
             "ended" => Some(Reply::Ended(rest.to_owned())),

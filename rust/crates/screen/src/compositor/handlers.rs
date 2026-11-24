@@ -4,6 +4,7 @@
 //! `seat.rs`.
 
 use std::sync::LazyLock;
+use std::time::Instant;
 
 use smithay::backend::renderer::utils::on_commit_buffer_handler;
 use smithay::desktop::{PopupKind, find_popup_root_surface, get_popup_toplevel_coords};
@@ -18,7 +19,7 @@ use smithay::wayland::compositor::{
 use smithay::wayland::output::OutputHandler;
 use smithay::wayland::shell::xdg::decoration::XdgDecorationHandler;
 use smithay::wayland::shell::xdg::{
-    PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState,
+    PopupSurface, PositionerState, ShellClient, ToplevelSurface, XdgShellHandler, XdgShellState,
 };
 use smithay::wayland::shm::{ShmHandler, ShmState};
 use smithay::{
@@ -45,6 +46,8 @@ impl CompositorHandler for State {
     fn commit(&mut self, surface: &WlSurface) {
         on_commit_buffer_handler::<Self>(surface);
         self.dirty = true;
+        self.commits += 1;
+        self.last_commit = Instant::now();
         if !is_sync_subsurface(surface) {
             let mut root = surface.clone();
             while let Some(parent) = get_parent(&root) {
@@ -97,6 +100,10 @@ impl XdgShellHandler for State {
         self.keep_on_screen(&surface);
         // Fails only if the popup's parent is gone, and then so is the popup.
         let _ = self.popups.track_popup(PopupKind::Xdg(surface));
+    }
+
+    fn client_pong(&mut self, app: ShellClient) {
+        self.ponged(app);
     }
 
     fn popup_destroyed(&mut self, _surface: PopupSurface) {

@@ -19,7 +19,10 @@ fn handshake_then_the_tool_list() {
     assert_eq!(init["serverInfo"]["name"], "hypr-computer");
     assert!(init["capabilities"]["tools"].is_object(), "{init}");
 
-    assert_eq!(shim.tool_names(), ["screenshot", "launch_app"]);
+    assert_eq!(
+        shim.tool_names(),
+        ["screenshot", "launch_app", "click", "move"]
+    );
 
     let ping = shim.request("ping", json!({}));
     assert_eq!(ping["result"], json!({}), "{ping}");

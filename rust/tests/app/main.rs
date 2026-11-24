@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 
 mod log;
+mod pointer;
 mod seat;
 mod window;
 
@@ -22,6 +23,7 @@ use wayland_client::protocol::wl_seat;
 use wayland_client::{Connection, QueueHandle};
 
 use crate::log::Log;
+use crate::pointer::Pointer;
 use crate::window::Window;
 
 /// Everything the app holds; the Wayland events of every module land here.
@@ -32,8 +34,11 @@ pub struct App {
     pub colours: ([u8; 3], [u8; 3]),
     /// Something changed what the window should show.
     pub dirty: bool,
+    /// How many times input has come.
+    inputs: u32,
     /// What the screen's seat offers.
     pub seat: Vec<&'static str>,
+    pub pointer: Pointer,
 }
 
 impl App {
@@ -44,6 +49,16 @@ impl App {
             eprintln!("hc-test-app: can't write the log: {e}");
             process::exit(1);
         }
+    }
+
+    /// Input came: the window turns a new colour.
+    pub fn input_seen(&mut self) {
+        self.inputs += 1;
+        let n = self.inputs;
+        let shade = |a: u32, b: u32| ((n * a + b) % 256) as u8;
+        let colour = [shade(67, 30), shade(131, 60), shade(29, 90)];
+        self.colours = (colour, colour);
+        self.dirty = true;
     }
 
     fn paint(&mut self, qh: &QueueHandle<App>) -> Result<(), Box<dyn Error>> {
@@ -80,7 +95,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         window: Window::new(&globals, &qh)?,
         colours: (args.top, args.bottom),
         dirty: true,
+        inputs: 0,
         seat: Vec::new(),
+        pointer: Pointer::default(),
     };
     // Optional: with no seat, the app just shows its colours.
     let _seat = globals.bind::<wl_seat::WlSeat, _, _>(&qh, 5..=9, ()).ok();

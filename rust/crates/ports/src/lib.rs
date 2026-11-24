@@ -58,10 +58,59 @@ pub enum Launched {
     Exited { status: String, output: String },
 }
 
+/// A point on a screen, in pixels from its top-left corner.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Point {
+    pub x: u32,
+    pub y: u32,
+}
+
+/// A pointer button.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Button {
+    Left,
+    Middle,
+    Right,
+}
+
+impl Button {
+    pub const ALL: [Button; 3] = [Button::Left, Button::Middle, Button::Right];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Button::Left => "left",
+            Button::Middle => "middle",
+            Button::Right => "right",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Button> {
+        Button::ALL.into_iter().find(|b| b.name() == name)
+    }
+}
+
+/// What an agent does with its screen's own pointer and keyboard.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Action {
+    /// Moves the pointer to the point.
+    Move(Point),
+    /// Moves the pointer to `at`, then clicks `button` `count` times: two is
+    /// a double click.
+    Click {
+        at: Point,
+        button: Button,
+        count: u32,
+    },
+}
+
 /// An agent's screen, as its tools see it.
 pub trait Screen: Send + Sync {
     /// The whole screen, as it is now.
     fn screenshot(&self) -> BoxFuture<'_, Result<Png, ScreenError>>;
+    /// Does `action` with the screen's pointer or keyboard, which nothing
+    /// else drives, and returns once the app has drawn what it did in
+    /// response, so the next screenshot shows it.
+    fn act(&self, action: Action) -> BoxFuture<'_, Result<(), ScreenError>>;
     /// Starts an app on this screen and on no other, and waits a while for
     /// its window. The app ends with the screen, and so does all it starts.
     fn launch(&self, app: AppCommand) -> BoxFuture<'_, Result<Launched, ScreenError>>;

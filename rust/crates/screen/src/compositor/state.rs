@@ -24,6 +24,7 @@ use smithay::wayland::shell::xdg::decoration::XdgDecorationState;
 use smithay::wayland::shm::ShmState;
 
 use crate::apps::Apps;
+use crate::reading::Reading;
 use crate::seat::new_seat;
 
 /// The screen's size as Smithay wants it.
@@ -46,6 +47,11 @@ pub struct State {
     /// How many windows have drawn their first picture.
     pub windows_drawn: u64,
     pub apps: Apps,
+    /// How many times apps have drawn, and when they last did.
+    pub commits: u64,
+    pub last_commit: Instant,
+    /// Whether apps have read the agent's input.
+    pub reading: Reading,
 
     pub renderer: PixmanRenderer,
     /// What the screen is rendered into; kept, so a render redraws only what changed.
@@ -118,6 +124,9 @@ impl State {
             dirty: true,
             windows_drawn: 0,
             apps,
+            commits: 0,
+            last_commit: Instant::now(),
+            reading: Reading::default(),
             renderer,
             target,
             damage,
@@ -126,6 +135,11 @@ impl State {
 
     pub fn stop(&self) {
         self.loop_signal.stop();
+    }
+
+    /// The time for an input event, in milliseconds.
+    pub fn time(&self) -> u32 {
+        self.started.elapsed().as_millis() as u32
     }
 
     /// Lets the shown app draw its next frame, if it drew since the last one.

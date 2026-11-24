@@ -12,7 +12,9 @@ use std::sync::{Arc, Mutex as SyncMutex, PoisonError};
 use std::time::Duration;
 
 use domain::SessionId;
-use ports::{AppCommand, BoxFuture, Launched, Png, Screen, ScreenError, ScreenProcess, Screens};
+use ports::{
+    Action, AppCommand, BoxFuture, Launched, Png, Screen, ScreenError, ScreenProcess, Screens,
+};
 use rustix::process::{
     Pid, Signal, WaitOptions, getpid, kill_process, kill_process_group, set_child_subreaper,
     test_kill_process_group, waitpid,
@@ -149,7 +151,7 @@ pub(crate) struct ScreenChild {
     exited: watch::Receiver<bool>,
 }
 
-struct Pipe {
+pub(crate) struct Pipe {
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
 }
@@ -161,6 +163,7 @@ enum Answer {
     Launched(u32),
     /// `None` while the app runs, then its exit status.
     App(Option<String>),
+    Done(u64),
 }
 
 /// The screen answered, but not what was asked; `Pipe::ask` rules it out.
@@ -202,6 +205,7 @@ impl Pipe {
             (Request::Launch { .. }, Some(Reply::Launched(pid))) => Ok(Ok(Answer::Launched(pid))),
             (Request::App(_), Some(Reply::Running)) => Ok(Ok(Answer::App(None))),
             (Request::App(_), Some(Reply::Ended(status))) => Ok(Ok(Answer::App(Some(status)))),
+            (Request::Act(_), Some(Reply::Done(commits))) => Ok(Ok(Answer::Done(commits))),
             (_, Some(Reply::Error(why))) => Ok(Err(why)),
             _ => Err(ScreenError(format!(
                 "the screen answered {:?} to {:?}",
@@ -218,7 +222,7 @@ impl ScreenChild {
     }
 
     /// The status, with the pipe already locked.
-    async fn status_on(&self, pipe: &mut Option<Pipe>) -> Result<Status, ScreenError> {
+    pub(crate) async fn status_on(&self, pipe: &mut Option<Pipe>) -> Result<Status, ScreenError> {
         match self.ask_on(pipe, &Request::Status).await? {
             Answer::Status(status) => Ok(status),
             _ => Err(mismatch()),
@@ -252,6 +256,17 @@ impl ScreenChild {
             Answer::Png(png) => Ok(png),
             _ => Err(mismatch()),
         }
+    }
+
+    /// Does `action`, then holds the pipe until the screen has settled, so
+    /// no other call sees the screen before the app has drawn its response.
+    async fn act_and_settle(&self, action: Action) -> Result<(), ScreenError> {
+        let mut pipe = self.pipe.lock().await;
+        let since = match self.ask_on(&mut pipe, &Request::Act(action)).await? {
+            Answer::Done(commits) => commits,
+            _ => return Err(mismatch()),
+        };
+        self.settle(&mut pipe, since).await
     }
 
     async fn ask_on(
@@ -353,6 +368,10 @@ fn kill(pid: u32) {
 impl Screen for ScreenChild {
     fn screenshot(&self) -> BoxFuture<'_, Result<Png, ScreenError>> {
         Box::pin(async move { self.png().await.map(Png) })
+    }
+
+    fn act(&self, action: Action) -> BoxFuture<'_, Result<(), ScreenError>> {
+        Box::pin(self.act_and_settle(action))
     }
 
     fn launch(&self, app: AppCommand) -> BoxFuture<'_, Result<Launched, ScreenError>> {
