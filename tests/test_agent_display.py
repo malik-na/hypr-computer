@@ -527,27 +527,20 @@ d={d}
 printf '%s\\n' "$*" >> $d/notify.log
 case " $* " in *" --wait "*) ;; *) exit 0;; esac
 [ -e $d/no-service ] && exit 1
-[ -e $d/dead-bus ] && exec sleep 30
+[ -e $d/dead-bus ] && { echo 0; exec sleep 30; }  # as the real one does with no service to reach
 echo 7
 i=0; while [ ! -e $d/answer ] && [ $i -lt 400 ]; do sleep 0.02; i=$((i+1)); done
 cat $d/answer 2>/dev/null; rm -f $d/answer
 """
-FAKE_GDBUS = """#!/bin/sh
-printf '%s\\n' "$*" >> {d}/gdbus.log
-: > {d}/answer
-"""
-
 
 @pytest.fixture
 def notifying(own, tmp_path, monkeypatch):
     """A desktop with a notification service, which the test answers for the user by writing `answer`."""
     d = tmp_path / "notify"
     d.mkdir()
-    for name, body in (("notify-send", FAKE_NOTIFY_SEND), ("gdbus", FAKE_GDBUS)):
-        (d / name).write_text(body.format(d=d))
-        (d / name).chmod(0o755)
+    (d / "notify-send").write_text(FAKE_NOTIFY_SEND.format(d=d))
+    (d / "notify-send").chmod(0o755)
     monkeypatch.setattr(server, "NOTIFY_SEND", str(d / "notify-send"))
-    monkeypatch.setenv("PATH", f"{d}:{os.environ['PATH']}")
     own.notify = d
     own.sent = lambda: (d / "notify.log").read_text().splitlines() if (d / "notify.log").exists() else []
     yield own
@@ -624,9 +617,11 @@ def test_with_no_service_to_reach_notify_send_hangs_and_hyprland_shows_the_notic
     assert f"AI agent at work: It's working on its own workspace. Watch it on {WATCH}." in notice
 
 
-def test_the_notice_goes_away_when_the_server_exits(notifying):
+def test_when_the_server_exits_its_notice_becomes_one_that_expires(notifying):
     notifying.call("agent_display", action="start")
     eventually(lambda: server._notice_id == "7")
     server.shutdown()
-    assert "--method org.freedesktop.Notifications.CloseNotification 7" in (notifying.notify / "gdbus.log").read_text()
     assert server._notice.wait(timeout=5) is not None
+    done = notifying.sent()[-1]
+    assert "--replace-id=7" in done and "--expire-time=4000" in done and "--action" not in done
+    assert done.endswith("AI agent done It's no longer using this desktop.")

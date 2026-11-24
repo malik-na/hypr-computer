@@ -829,7 +829,7 @@ def guard(point: tuple[int, int] | None = None, target: Target | None = None, hy
 _noticed = 0.0  # when the user was last shown the notice
 NOTIFY_SEND = "notify-send"
 NOTICE_TITLE = "AI agent at work"
-NOTICE_SHOWN_S = 3.0  # notify-send with no notification service to reach hangs instead of failing
+NOTICE_SHOWN_S = 3.0  # notify-send with no notification service to reach prints the id 0 and hangs
 _notice: subprocess.Popen | None = None  # the notice on screen, until the user answers it
 _notice_id = ""  # its id with the notification service
 
@@ -876,7 +876,7 @@ def await_answer(notice: subprocess.Popen, text: str) -> None:
     global _notice_id
     shown = notice.stdout is not None and bool(select.select([notice.stdout], [], [], NOTICE_SHOWN_S)[0])
     first = notice.stdout.readline().strip() if shown and notice.stdout else ""
-    _notice_id = first if first.isdigit() else ""
+    _notice_id = first if first.isdigit() and first != "0" else ""  # with no service to reach, it prints 0
     if not _notice_id:
         if notice.poll() is None:
             notice.kill()
@@ -896,15 +896,16 @@ def await_answer(notice: subprocess.Popen, text: str) -> None:
 
 
 def close_notice() -> None:
-    """Takes the notice off the screen when the server exits: no agent is left for it to be about."""
+    """When the server exits, replaces its notice with one that expires: no agent is left for it to be about.
+    Closing it wouldn't do: Omarchy's shell keeps a card its sender closed until the card's own time runs out."""
     notice = _notice
     if notice is None or notice.poll() is not None:
         return
     if _notice_id:
         with contextlib.suppress(OSError, subprocess.SubprocessError):
-            subprocess.run(["gdbus", "call", "--session", "--dest", "org.freedesktop.Notifications",
-                            "--object-path", "/org/freedesktop/Notifications",
-                            "--method", "org.freedesktop.Notifications.CloseNotification", _notice_id],
+            subprocess.run([NOTIFY_SEND, "--app-name=hypr-computer", "--icon=input-mouse", f"--replace-id={_notice_id}",
+                            "--urgency=normal", "--expire-time=4000", "AI agent done",
+                            "It's no longer using this desktop."],
                            env=session_env(), capture_output=True, timeout=2)
     notice.terminate()
 
