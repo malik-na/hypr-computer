@@ -298,6 +298,9 @@ pub enum Heard {
     Action(u32, String),
     /// Notification `id` was closed, whichever app's it is.
     Closed(u32),
+    /// The service went away, and every notification it showed with it: a
+    /// new one starts its ids again.
+    Gone,
 }
 
 /// The desktop's notification service. Nothing here waits for it: what it

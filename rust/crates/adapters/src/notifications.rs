@@ -3,8 +3,9 @@
 //!
 //! One task owns the bus connection. It sends each request as it comes and
 //! reads everything the bus sends back from one stream, so what it hears
-//! (answers to its calls, and in later changes the user's buttons) comes out
-//! in the order the service sent it. Callers never wait for the service.
+//! (answers to its calls, and the user's buttons) comes out in the order the
+//! service sent it. Callers never wait for the service. Only the service's
+//! own signals count, and when it goes away, so do its notifications.
 
 use std::collections::HashMap;
 use std::ffi::OsStr;
@@ -25,6 +26,7 @@ use zbus::{Connection, MatchRule, Message, MessageStream};
 const NAME: &str = "org.freedesktop.Notifications";
 const PATH: &str = "/org/freedesktop/Notifications";
 const INTERFACE: &str = "org.freedesktop.Notifications";
+const BUS: &str = "org.freedesktop.DBus";
 const APP_NAME: &str = "hypr-computer";
 const ICON: &str = "input-mouse";
 
@@ -121,15 +123,17 @@ async fn serve(
         ),
         Some(address) => connect(address).await,
     };
-    let (connection, mut stream) = match connected {
+    let (connection, mut stream, service) = match connected {
         Ok(connected) => connected,
         Err(why) => {
             warn!("no desktop notifications: {why}");
             return refuse(requests, heard, why).await;
         }
     };
-    // The calls waiting for their answer, by serial.
-    let mut waiting: HashMap<NonZeroU32, SessionId> = HashMap::new();
+    let mut hearing = Hearing {
+        waiting: HashMap::new(),
+        service,
+    };
     loop {
         tokio::select! {
             request = requests.recv() => match request {
@@ -137,7 +141,7 @@ async fn serve(
                 Some(Request::Show(session, notification)) => {
                     match send(&connection, &notification, true).await {
                         Ok(serial) => {
-                            waiting.insert(serial, session);
+                            hearing.waiting.insert(serial, session);
                         }
                         Err(why) => {
                             let _ = heard.send(Heard::Failed(session, why));
@@ -155,7 +159,7 @@ async fn serve(
             },
             message = stream.next() => match message {
                 Some(Ok(message)) => {
-                    if let Some(news) = hear(&message, &mut waiting) {
+                    if let Some(news) = hearing.hear(&message) {
                         let _ = heard.send(news);
                     }
                 }
@@ -163,7 +167,7 @@ async fn serve(
                 None => {
                     let why = "the session bus closed the connection".to_owned();
                     warn!("no more desktop notifications: {why}");
-                    for (_, session) in waiting.drain() {
+                    for (_, session) in hearing.waiting.drain() {
                         let _ = heard.send(Heard::Failed(session, why.clone()));
                     }
                     return refuse(requests, heard, why).await;
@@ -192,7 +196,11 @@ async fn refuse(
     }
 }
 
-async fn connect(address: &str) -> Result<(Connection, MessageStream), String> {
+/// The connection, a stream of everything it gets, and the unique name of
+/// the service, if one is running.
+type Connected = (Connection, MessageStream, Option<String>);
+
+async fn connect(address: &str) -> Result<Connected, String> {
     let connecting = async {
         let connection = zbus::connection::Builder::address(address).build().await?;
         // Made before the first call: it gets every message from now on.
@@ -204,11 +212,23 @@ async fn connect(address: &str) -> Result<(Connection, MessageStream), String> {
             .interface(INTERFACE)
             .path(PATH)
             .build()?;
-        zbus::fdo::DBusProxy::new(&connection)
-            .await?
-            .add_match_rule(signals)
-            .await?;
-        Ok::<_, zbus::Error>((connection, stream))
+        // Which connection is the service, now and from now on.
+        let owners = MatchRule::builder()
+            .msg_type(Type::Signal)
+            .sender(BUS)
+            .interface(BUS)
+            .member("NameOwnerChanged")
+            .arg(0, NAME)
+            .build()?;
+        let bus = zbus::fdo::DBusProxy::new(&connection).await?;
+        bus.add_match_rule(signals).await?;
+        bus.add_match_rule(owners).await?;
+        let service = match bus.get_name_owner(NAME.try_into()?).await {
+            Ok(owner) => Some(owner.to_string()),
+            // No service yet: one may start later.
+            Err(_) => None,
+        };
+        Ok::<_, zbus::Error>((connection, stream, service))
     };
     match tokio::time::timeout(CONNECT_TIME, connecting).await {
         Ok(Ok(connected)) => Ok(connected),
@@ -268,7 +288,42 @@ async fn send(
     Ok(serial)
 }
 
-/// What `message` says, if it is news.
+/// What the task knows to make sense of what it hears.
+struct Hearing {
+    /// The calls waiting for their answer, by serial.
+    waiting: HashMap<NonZeroU32, SessionId>,
+    /// The service's unique name: only its signals are the user's answers.
+    service: Option<String>,
+}
+
+impl Hearing {
+    /// What `message` says, if it is news.
+    fn hear(&mut self, message: &Message) -> Option<Heard> {
+        let header = message.header();
+        let sender = header.sender().map(|s| s.as_str());
+        match message.message_type() {
+            Type::Signal if header.interface().is_some_and(|i| i.as_str() == BUS) => {
+                if sender != Some(BUS) || header.member()?.as_str() != "NameOwnerChanged" {
+                    return None;
+                }
+                let (name, old, new) = message
+                    .body()
+                    .deserialize::<(String, String, String)>()
+                    .ok()?;
+                if name != NAME {
+                    return None;
+                }
+                self.service = Some(new).filter(|n| !n.is_empty());
+                (!old.is_empty()).then_some(Heard::Gone)
+            }
+            Type::Signal if self.service.is_none() || sender != self.service.as_deref() => None,
+            _ => hear(message, &mut self.waiting),
+        }
+    }
+}
+
+/// What `message` says, if it is news: an answer to a call, or the service's
+/// signal.
 fn hear(message: &Message, waiting: &mut HashMap<NonZeroU32, SessionId>) -> Option<Heard> {
     let header = message.header();
     match message.message_type() {

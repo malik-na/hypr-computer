@@ -60,6 +60,23 @@ impl State {
                 _ => return,
             },
             Heard::Closed(note) => Event::Answer(note, Answer::Closed),
+            Heard::Gone => {
+                // Its notices went with it, and a new one reuses their ids:
+                // they must never be taken for its own.
+                warn!("the notification service went away, and the agents' notices with it");
+                let shown: Vec<u32> = self
+                    .labels
+                    .keys()
+                    .filter_map(|&id| match self.notices.get(id) {
+                        Some(Notice::Shown(note)) => Some(note),
+                        _ => None,
+                    })
+                    .collect();
+                for note in shown {
+                    self.notice_step(Event::Answer(note, Answer::Closed));
+                }
+                return;
+            }
         };
         self.notice_step(event);
     }
