@@ -1976,6 +1976,25 @@ def stop_agent_display() -> str:
                                             "until it starts again." if parked else "") + (" " + lost if lost else ""))
 
 
+def exit_on_sigterm() -> None:
+    """On SIGTERM, cleans up and leaves at once (a thread waiting on stdin would keep a normal exit waiting).
+    Python runs a signal handler only in the main thread, once it wakes; the kernel may give SIGTERM to another
+    thread while the main thread sleeps in select(), and then it never wakes. The thread that gets the signal
+    writes it to the wakeup fd, and a thread of its own acts on it."""
+    r, w = os.pipe()
+    os.set_blocking(w, False)
+    signal.signal(signal.SIGTERM, lambda *_: None)
+    signal.set_wakeup_fd(w, warn_on_full_buffer=False)
+
+    def wait() -> None:
+        while os.read(r, 1) != bytes([signal.SIGTERM]):
+            pass
+        shutdown()
+        os._exit(0)
+
+    threading.Thread(target=wait, name="sigterm", daemon=True).start()
+
+
 def shutdown() -> None:
     """When the server exits, turns off the agent display it turned on, parking its windows and closing its live
     view, and takes its notice off the screen."""
@@ -2700,8 +2719,7 @@ if __name__ == "__main__":
     _unconfined = confine()
     if _unconfined:
         print(f"hypr-computer: the network is not blocked: {_unconfined}", file=sys.stderr)
-    # A thread waiting on stdin keeps a normal exit waiting, so a SIGTERM cleans up and leaves at once.
-    signal.signal(signal.SIGTERM, lambda *_: (shutdown(), os._exit(0)))
+    exit_on_sigterm()
     try:
         build_server().run()
     finally:
