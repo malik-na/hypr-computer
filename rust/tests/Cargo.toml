@@ -151,6 +151,11 @@ path = "page_popups_spec.rs"
 name = "browser_windows_spec"
 path = "browser_windows_spec.rs"
 
+# #30, written from the spec by an independent test agent; helpers in spec30/.
+[[test]]
+name = "takeover_click_spec"
+path = "takeover_click_spec.rs"
+
 # The tiny Wayland app the tests put on a screen (see support/app.rs).
 [[bin]]
 name = "hc-test-app"
