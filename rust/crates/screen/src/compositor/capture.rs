@@ -16,6 +16,13 @@ const BACKGROUND: [f32; 4] = [0.1, 0.1, 0.1, 1.0];
 impl State {
     /// The screen as it is now, as a PNG.
     pub fn screenshot(&mut self) -> Result<Vec<u8>, String> {
+        self.render()?;
+        // Abgr8888 is R, G, B, A in memory.
+        encode_png(&self.pixels(Fourcc::Abgr8888)?)
+    }
+
+    /// Draws what changed on the screen since the last render.
+    pub fn render(&mut self) -> Result<(), String> {
         let State {
             renderer,
             target,
@@ -40,18 +47,28 @@ impl State {
             BACKGROUND,
         )
         .map_err(|e| format!("can't render: {e:?}"))?;
-        // Abgr8888 is R, G, B, A in memory; the readback is top row first.
+        Ok(())
+    }
+
+    /// The last render's pixels, top row first, in `format`.
+    pub fn pixels(&mut self, format: Fourcc) -> Result<Vec<u8>, String> {
+        let State {
+            renderer, target, ..
+        } = self;
+        let framebuffer = renderer
+            .bind(target)
+            .map_err(|e| format!("can't read the screen: {e}"))?;
         let mapping = renderer
             .copy_framebuffer(
                 &framebuffer,
                 Rectangle::from_size((WIDTH, HEIGHT).into()),
-                Fourcc::Abgr8888,
+                format,
             )
             .map_err(|e| format!("can't read the screen: {e}"))?;
-        let rgba = renderer
+        renderer
             .map_texture(&mapping)
-            .map_err(|e| format!("can't read the screen: {e}"))?;
-        encode_png(rgba)
+            .map(<[u8]>::to_vec)
+            .map_err(|e| format!("can't read the screen: {e}"))
     }
 }
 
