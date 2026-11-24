@@ -96,12 +96,18 @@ fn main() -> ExitCode {
         std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").as_deref(),
     );
 
+    let notifications = adapters::notifications(adapters::session_bus(
+        std::env::var_os("DBUS_SESSION_BUS_ADDRESS").as_deref(),
+        runtime_dir.as_deref(),
+    ));
+
     match runtime.block_on(serve::run(
         listening,
         Arc::new(SystemClock),
         screens,
         stop,
         desktop,
+        notifications,
     )) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {

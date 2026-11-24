@@ -76,8 +76,9 @@ jobs:
         with:
           workspaces: rust
       # The agent's screen (crates/screen) links pixman and libxkbcommon and
-      # reads xkeyboard-config's files; the tests run foot on it.
-      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpixman-1-dev libxkbcommon-dev xkb-data foot fonts-dejavu-core
+      # reads xkeyboard-config's files; the tests run foot on it, and give the
+      # notice's tests a private session bus with dbus-daemon.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpixman-1-dev libxkbcommon-dev xkb-data foot fonts-dejavu-core dbus-daemon
       # The #26 tests open pages in the runner's own Chromium. Its sandbox needs
       # unprivileged user namespaces, which Ubuntu 24.04 restricts with
       # AppArmor ("No usable sandbox!"); allow them, rather than run it unsandboxed.

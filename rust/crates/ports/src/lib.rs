@@ -272,3 +272,35 @@ pub trait Screens: Send + Sync {
     /// teardown can stop it while it is still starting.
     fn spawn(&self, session: SessionId) -> Result<Arc<dyn ScreenProcess>, ScreenError>;
 }
+
+/// A desktop notification, for the notification service to show.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Notification {
+    pub summary: String,
+    pub body: String,
+    /// Its buttons, as (key, label).
+    pub actions: Vec<(String, String)>,
+    /// How long it stays, in milliseconds; `None`: until the user answers it.
+    pub expires_ms: Option<u32>,
+    /// The notification it takes the place of.
+    pub replaces: Option<u32>,
+}
+
+/// What the notification service did, in the order it did it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Heard {
+    /// It showed the session's notification, with this id.
+    Shown(SessionId, u32),
+    /// It didn't, and why: no session bus, no service on it, or an error.
+    Failed(SessionId, String),
+}
+
+/// The desktop's notification service. Nothing here waits for it: what it
+/// does comes back from [`Notifications::heard`], in the order it did it.
+pub trait Notifications: Send + Sync {
+    /// Asks the service to show the session's notification. Its answer,
+    /// whenever it comes, is heard as `Shown` or `Failed`.
+    fn show(&self, session: SessionId, notification: Notification);
+    /// The next thing heard from the service. One task at a time asks.
+    fn heard(&self) -> BoxFuture<'_, Heard>;
+}

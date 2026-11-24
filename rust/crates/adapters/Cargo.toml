@@ -9,8 +9,12 @@ publish.workspace = true
 
 [dependencies]
 domain.workspace = true
+# The notification service, on the session bus; the version the tests' fake service uses.
+futures-util = "0.3.31"
 ports.workspace = true
 tokio.workspace = true
+tracing.workspace = true
+zbus = "6.5.0"
 
 [lints]
 workspace = true
