@@ -63,7 +63,7 @@ fn the_view_shows_what_a_screenshot_shows() {
     let mut shim = agent(&env);
     desktop.wait_for_views(1);
 
-    let _app = App::paint(&env.screen_socket(1), RED, BLUE);
+    let _app = App::paint(&env, 1, RED, BLUE);
     let shot = shim.screenshot();
     assert_eq!(shot.pixel(0, 0), RED);
     assert_desktop_shows(&mut desktop, &shot);
@@ -75,15 +75,15 @@ fn the_view_is_current_again_right_after_being_hidden() {
     let mut desktop = Desktop::start(&env);
     let _daemon = Daemon::start_on(&env, &desktop);
     let mut shim = agent(&env);
-    let first = App::paint(&env.screen_socket(1), RED, BLUE);
+    let first = App::paint(&env, 1, RED, BLUE);
     desktop.wait_for_views(1);
     assert_desktop_shows(&mut desktop, &shim.screenshot());
 
     // A window of the user's hides the view while the agent's screen changes.
-    let cover = App::paint(desktop.socket(), GREEN, GREEN);
+    let cover = App::paint_on(&env, desktop.socket(), GREEN, GREEN);
     assert_eq!(desktop.screenshot().pixel(640, 400), GREEN);
     drop(first);
-    let _second = App::paint(&env.screen_socket(1), BLUE, RED);
+    let _second = App::paint(&env, 1, BLUE, RED);
     let shot = shim.screenshot();
     assert_eq!(shot.pixel(0, 0), BLUE);
 

@@ -2,8 +2,8 @@
 //! size, with no decorations. A new window is shown at once; when the shown
 //! one closes, the newest of the others comes back.
 
-use smithay::backend::renderer::utils::with_renderer_surface_state;
 use serde_json::json;
+use smithay::backend::renderer::utils::with_renderer_surface_state;
 use smithay::desktop::Window;
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
