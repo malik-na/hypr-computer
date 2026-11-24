@@ -177,6 +177,11 @@ impl ScreenChild {
         self.dir.join(SOCKET)
     }
 
+    /// The runtime dir apps on the screen get in place of the user's.
+    pub(crate) fn app_runtime_dir(&self) -> PathBuf {
+        self.dir.join("run")
+    }
+
     pub(crate) async fn status(&self) -> Result<Status, ScreenError> {
         self.status_on(&mut *self.pipe.lock().await).await
     }
@@ -308,8 +313,9 @@ impl ScreenProcess for ScreenChild {
 
     fn teardown(&self) -> BoxFuture<'_, ()> {
         Box::pin(async move {
-            // Until the screen is reaped and nothing it started is left.
-            while self.kill_group() {
+            // Until the screen is reaped and nothing it started is left, in
+            // its process group or out of it.
+            while self.kill_group() | self.kill_strays() {
                 tokio::time::sleep(Duration::from_millis(5)).await;
             }
             // A killed screen leaves its socket and lock file behind.

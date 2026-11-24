@@ -42,7 +42,7 @@ const USERS_SESSION: &[&str] = &[
 impl ScreenChild {
     pub(crate) async fn start_app(&self, app: AppCommand) -> Result<Launched, ScreenError> {
         let before = self.status().await?.windows;
-        let runtime = self.dir.join("run");
+        let runtime = self.app_runtime_dir();
         let cant = |e: io::Error| ScreenError(e.to_string());
         match DirBuilder::new().mode(0o700).create(&runtime) {
             Err(e) if e.kind() != io::ErrorKind::AlreadyExists => return Err(cant(e)),
