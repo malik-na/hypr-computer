@@ -10,17 +10,21 @@ use std::sync::Mutex;
 /// How far up from a window's process to look for the app that started it.
 const MAX_DEPTH: usize = 64;
 
-/// The processes started on a screen, and the app each one is.
+/// The processes started on a screen: for each pid, the app it was started
+/// as and when it started, so a pid that comes back as another process's
+/// isn't taken for the app.
 #[derive(Default)]
-pub(crate) struct Apps(Mutex<HashMap<u32, String>>);
+pub(crate) struct Apps(Mutex<HashMap<u32, (String, u64)>>);
 
 impl Apps {
     /// Process `pid` was started as app `name`.
     pub(crate) fn started(&self, pid: u32, name: &str) {
+        let Some(since) = stat(pid).map(|s| s.start) else {
+            return;
+        };
         if let Ok(mut apps) = self.0.lock() {
-            // A process that is gone can't make a window; its pid may come back as another's.
-            apps.retain(|pid, _| Path::new(&format!("/proc/{pid}")).exists());
-            apps.insert(pid, name.to_owned());
+            apps.retain(|pid, (_, since)| stat(*pid).is_some_and(|s| s.start == *since));
+            apps.insert(pid, (name.to_owned(), since));
         }
     }
 
@@ -30,21 +34,34 @@ impl Apps {
         let apps = self.0.lock().ok()?;
         let mut pid = pid;
         for _ in 0..MAX_DEPTH {
-            if let Some(name) = apps.get(&pid) {
+            let now = stat(pid)?;
+            if let Some((name, since)) = apps.get(&pid)
+                && now.start == *since
+            {
                 return Some(name.clone());
             }
-            pid = parent(pid).filter(|parent| *parent > 1)?;
+            pid = Some(now.parent).filter(|parent| *parent > 1)?;
         }
         None
     }
 }
 
-/// The parent of process `pid`, from `/proc/<pid>/stat`.
-fn parent(pid: u32) -> Option<u32> {
+/// What `/proc/<pid>/stat` says of a process.
+struct Stat {
+    parent: u32,
+    /// When it started, in clock ticks since boot.
+    start: u64,
+}
+
+fn stat(pid: u32) -> Option<Stat> {
     let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
     // The command name, in parentheses, may itself hold spaces and parentheses.
     let (_, after) = stat.rsplit_once(')')?;
-    after.split_whitespace().nth(1)?.parse().ok()
+    let fields: Vec<&str> = after.split_whitespace().collect();
+    Some(Stat {
+        parent: fields.get(1)?.parse().ok()?,
+        start: fields.get(19)?.parse().ok()?,
+    })
 }
 
 /// The app name of `program`, as launch_app gives it: its file name.
