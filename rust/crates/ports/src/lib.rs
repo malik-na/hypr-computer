@@ -301,6 +301,10 @@ pub trait Notifications: Send + Sync {
     /// Asks the service to show the session's notification. Its answer,
     /// whenever it comes, is heard as `Shown` or `Failed`.
     fn show(&self, session: SessionId, notification: Notification);
+    /// Shows `notification`, needing no answer.
+    fn send(&self, notification: Notification);
+    /// Resolves once everything asked for so far has been sent.
+    fn flush(&self) -> BoxFuture<'_, ()>;
     /// The next thing heard from the service. One task at a time asks.
     fn heard(&self) -> BoxFuture<'_, Heard>;
 }

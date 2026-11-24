@@ -8,6 +8,7 @@
 use std::collections::VecDeque;
 use std::future::Future;
 use std::sync::Arc;
+use std::time::Duration;
 
 use domain::control::Reply;
 use domain::lifecycle::{Effect, Event, SessionState};
@@ -67,7 +68,17 @@ enum Msg {
     /// `hypr-computer take <agent>`.
     Take(String, oneshot::Sender<Reply>),
     Stop,
+    /// Stopping, the owner has waited long enough for the notification
+    /// service's answers.
+    GiveUp,
 }
+
+/// How long a stopping daemon waits for the notification service to answer
+/// for sessions that have ended, to replace their notices.
+const NOTICE_GRACE: Duration = Duration::from_secs(2);
+
+/// How long a stopping daemon waits for its last notifications to be sent.
+const FLUSH_GRACE: Duration = Duration::from_secs(1);
 
 /// The answer to a tool call: the screen to run it on, or why not.
 type Admission = Result<Arc<dyn Screen>, String>;
@@ -132,11 +143,14 @@ impl Owner {
             stop_waiters: Vec::new(),
             takeovers: TakeOvers::new(),
             notices: Notices::new(),
-            notifications,
+            labels: notices::Labels::new(),
+            notifications: notifications.clone(),
         };
         let owner = tokio::spawn(async move {
             run(rx, state).await;
             hearing.abort();
+            // "Done" for the sessions that just ended, before the daemon exits.
+            let _ = tokio::time::timeout(FLUSH_GRACE, notifications.flush()).await;
         });
         (Owner { tx }, owner)
     }
@@ -279,6 +293,7 @@ struct State {
     takeovers: TakeOvers<SessionId>,
     /// Each session's notice.
     notices: Notices<SessionId, u32>,
+    labels: notices::Labels,
     notifications: Arc<dyn Notifications>,
 }
 
@@ -294,6 +309,7 @@ async fn hear(notifications: Arc<dyn Notifications>, tx: mpsc::UnboundedSender<M
 
 async fn run(mut rx: mpsc::UnboundedReceiver<Msg>, mut state: State) {
     let mut stopping = false;
+    let mut giving_up = false;
     while let Some(msg) = rx.recv().await {
         match msg {
             Msg::Connect(connection, reply) => state.connect(connection, reply),
@@ -318,9 +334,20 @@ async fn run(mut rx: mpsc::UnboundedReceiver<Msg>, mut state: State) {
             Msg::Give(reply) => state.give(reply),
             Msg::Take(agent, reply) => state.take(&agent, reply),
             Msg::Stop => stopping = true,
+            Msg::GiveUp => return,
         }
         if stopping && state.sessions.open_count() == 0 {
-            return;
+            if !state.notices_pending() {
+                return;
+            }
+            if !giving_up {
+                giving_up = true;
+                let tx = state.tx.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(NOTICE_GRACE).await;
+                    let _ = tx.send(Msg::GiveUp);
+                });
+            }
         }
     }
 }
@@ -412,6 +439,7 @@ impl State {
             );
             self.stop_disconnect(id);
             self.takeover_disconnect(id);
+            self.notice_disconnect(id);
             self.show_waiting();
             return;
         }
