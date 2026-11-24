@@ -1,0 +1,46 @@
+# The Rust rewrite of hypr-computer. See docs/design.md for the design and
+# AGENTS.md ("Rust rewrite") for how to add a tool and run the checks.
+[workspace]
+resolver = "3"
+members = [
+    "crates/domain",
+    
+    
+    
+    
+    
+    
+]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.100"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+domain = { path = "crates/domain" }
+ports = { path = "crates/ports" }
+adapters = { path = "crates/adapters" }
+tools = { path = "crates/tools" }
+
+listenfd = "1.0.2"
+rmcp = { version = "3.11.0", default-features = false, features = ["server"] }
+serde_json = "1.0.154"
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time", "io-util"] }
+tokio-util = { version = "0.7.20", features = ["rt"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "std", "ansi"] }
+
+# Every crate opts in with `[lints] workspace = true`; rust/tests/architecture.rs
+# fails if one doesn't, or if these are weakened.
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
