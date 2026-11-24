@@ -1,6 +1,7 @@
 //! The `hypr-computer` commands: one per connection to the control socket,
 //! answered by the owner (`domain::control` has the format).
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use domain::control::{Command, Reply};
@@ -9,6 +10,7 @@ use tokio::net::{UnixListener, UnixStream};
 use tokio::time::timeout;
 use tracing::warn;
 
+use crate::log::ActionLog;
 use crate::owner::Owner;
 
 /// How long a command may take to say what it wants.
@@ -17,11 +19,11 @@ const ASK_TIME: Duration = Duration::from_secs(5);
 const MAX_ASK: u64 = 1024;
 
 /// Answers commands until the task is dropped.
-pub async fn serve(listener: UnixListener, owner: Owner) {
+pub async fn serve(listener: UnixListener, owner: Owner, log: Arc<ActionLog>) {
     loop {
         match listener.accept().await {
             Ok((stream, _)) => {
-                tokio::spawn(answer(stream, owner.clone()));
+                tokio::spawn(answer(stream, owner.clone(), log.clone()));
             }
             Err(e) => {
                 warn!("accept on the control socket failed: {e}");
@@ -31,7 +33,7 @@ pub async fn serve(listener: UnixListener, owner: Owner) {
     }
 }
 
-async fn answer(stream: UnixStream, owner: Owner) {
+async fn answer(stream: UnixStream, owner: Owner, log: Arc<ActionLog>) {
     let (read, mut write) = stream.into_split();
     let mut line = String::new();
     let asked = timeout(
@@ -47,6 +49,11 @@ async fn answer(stream: UnixStream, owner: Owner) {
         (Ok(Ok(_)), Some(Command::ResumeOne(agent))) => owner.resume_one(agent).await,
         (Ok(Ok(_)), Some(Command::Give)) => owner.give().await,
         (Ok(Ok(_)), Some(Command::Take(agent))) => owner.take(agent).await,
+        (Ok(Ok(_)), Some(Command::Log(agent))) => Some(
+            tokio::task::spawn_blocking(move || log.show(&agent))
+                .await
+                .unwrap_or_else(|_| Reply::Refused("The action log couldn't be read.".to_owned())),
+        ),
         (Ok(Ok(_)), None) => Some(Reply::Refused(format!(
             "unknown command {:?}",
             line.trim_end()

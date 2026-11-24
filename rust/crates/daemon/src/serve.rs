@@ -17,6 +17,7 @@ use tracing::{info, warn};
 
 use crate::control;
 use crate::listen::Listening;
+use crate::log::ActionLog;
 use crate::mcp::SessionServer;
 use crate::owner::Owner;
 
@@ -31,6 +32,7 @@ pub async fn run(
     screens: Arc<dyn Screens>,
     stop: CancellationToken,
     desktop: Arc<dyn Desktop>,
+    log: Arc<ActionLog>,
 ) -> Result<(), String> {
     let Listening {
         listener,
@@ -45,14 +47,14 @@ pub async fn run(
     let (owner, owner_task) = Owner::spawn(clock, screens, desktop);
     let registry = Arc::new(Registry::builtin());
     let sessions = TaskTracker::new();
-    let commands = tokio::spawn(control::serve(control, owner.clone()));
+    let commands = tokio::spawn(control::serve(control, owner.clone(), log.clone()));
 
     loop {
         tokio::select! {
             () = stop.cancelled() => break,
             accepted = listener.accept() => match accepted {
                 Ok((stream, _)) => {
-                    sessions.spawn(session(stream, owner.clone(), registry.clone(), stop.child_token()));
+                    sessions.spawn(session(stream, owner.clone(), registry.clone(), log.clone(), stop.child_token()));
                 }
                 Err(e) => {
                     // Usually out of file descriptors; don't spin.
@@ -131,13 +133,14 @@ async fn session(
     stream: UnixStream,
     owner: Owner,
     registry: Arc<Registry>,
+    log: Arc<ActionLog>,
     stop: CancellationToken,
 ) {
     let connection = stop.child_token();
     let Some(ticket) = owner.open(connection.clone()).await else {
         return;
     };
-    let server = SessionServer::new(Arc::new(ticket.gate()), registry);
+    let server = SessionServer::new(Arc::new(ticket.gate(&log)), registry);
     let reason = match server.serve_with_ct(stream, connection).await {
         Ok(running) => match running.waiting().await {
             Ok(QuitReason::Closed) => EndReason::Disconnected,

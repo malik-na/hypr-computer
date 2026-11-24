@@ -14,12 +14,21 @@ const MAX_NAME: usize = 64;
 /// A view's title: the agent's name, as its MCP client gave it, and the
 /// session's number, so two agents of the same kind can be told apart.
 pub fn title(agent: &str, session: SessionId) -> String {
+    format!("{} (session {})", agent_name(agent), session.get())
+}
+
+/// An agent's name as its view shows it: no control characters, at most
+/// `MAX_NAME` characters, trimmed, and "agent" if that leaves nothing.
+pub fn agent_name(agent: &str) -> String {
     let name: String = agent
         .chars()
         .filter(|c| !c.is_control())
         .take(MAX_NAME)
         .collect();
     let name = name.trim();
-    let name = if name.is_empty() { "agent" } else { name };
-    format!("{name} (session {})", session.get())
+    if name.is_empty() {
+        "agent".to_owned()
+    } else {
+        name.to_owned()
+    }
 }

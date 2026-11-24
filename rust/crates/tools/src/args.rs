@@ -2,9 +2,20 @@
 //! wrong argument is a [`CallError::InvalidArguments`] that says what to send.
 
 use ports::Point;
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::registry::CallError;
+
+/// How the action log keeps a value it mustn't: its length, as
+/// `{"characters": N}`. A string's length is in characters (Unicode scalar
+/// values); anything else's, in characters of its JSON.
+pub fn characters(value: &Value) -> Value {
+    let n = match value {
+        Value::String(s) => s.chars().count(),
+        other => other.to_string().chars().count(),
+    };
+    json!({"characters": n})
+}
 
 fn invalid(why: String) -> CallError {
     CallError::InvalidArguments(why)

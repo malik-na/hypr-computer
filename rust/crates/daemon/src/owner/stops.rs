@@ -10,6 +10,7 @@ use domain::stop::{Call, Effect, Event, Run};
 use domain::takeover::{self, Effect as TakeOverEffect};
 use ports::{Screen, ScreenProcess};
 use tokio::sync::oneshot;
+use tools::Refusal;
 use tracing::info;
 
 use super::pass::Pass;
@@ -18,6 +19,14 @@ use super::{Admission, State, refusal};
 /// What a stopped agent's tool calls get.
 pub(super) const STOPPED: &str = "Stopped by the user: your screen gets no more input from you \
      until they let you go on. Stop here and ask the user what to do next.";
+
+/// A call refused because the user stopped its agent.
+pub(super) fn stopped() -> Refusal {
+    Refusal {
+        why: STOPPED.to_owned(),
+        stopped: true,
+    }
+}
 
 /// What a tool call gets when the stop came while it ran.
 pub(super) const STOPPED_DURING: &str = "Stopped by the user while this call was running: part \
@@ -203,7 +212,7 @@ impl State {
                             self.wait_turn(id, reply);
                             break;
                         }
-                        _ => Err(STOPPED.to_owned()),
+                        _ => Err(stopped()),
                     },
                 };
                 let admitted = admission.is_ok();
@@ -235,7 +244,7 @@ impl State {
                 let pass = Pass::new(id, call, screen, self.tx.clone(), took_over);
                 Ok(Arc::new(pass) as Arc<dyn Screen>)
             }
-            _ => Err(STOPPED.to_owned()),
+            _ => Err(stopped()),
         }
     }
 }

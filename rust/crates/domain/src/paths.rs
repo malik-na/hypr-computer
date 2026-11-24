@@ -59,6 +59,23 @@ pub fn control_socket(runtime_dir: Option<&OsStr>) -> Result<PathBuf, RuntimeDir
     Ok(daemon_dir(runtime_dir)?.join(CONTROL_NAME))
 }
 
+/// hypr-computer's own dir in the user's state dir:
+/// `$XDG_STATE_HOME/hypr-computer`, or `~/.local/state/hypr-computer` when
+/// `$XDG_STATE_HOME` is unset, empty or not absolute (as the XDG spec says).
+/// `None` if neither gives an absolute path.
+pub fn state_dir(xdg_state_home: Option<&OsStr>, home: Option<&OsStr>) -> Option<PathBuf> {
+    let absolute =
+        |dir: Option<&OsStr>| dir.map(PathBuf::from).filter(|d: &PathBuf| d.is_absolute());
+    let base = match absolute(xdg_state_home) {
+        Some(state) => state,
+        None => absolute(home)?.join(".local").join("state"),
+    };
+    Some(base.join(DIR_NAME))
+}
+
+/// The action log's dir, inside [`state_dir`].
+pub const LOG_NAME: &str = "log";
+
 /// The user's desktop's Wayland socket, given the values of
 /// `$WAYLAND_DISPLAY` and `$XDG_RUNTIME_DIR`, as Wayland apps find it:
 /// `$WAYLAND_DISPLAY` if it is absolute, otherwise inside the runtime dir.

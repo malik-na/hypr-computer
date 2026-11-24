@@ -23,7 +23,8 @@ const USAGE: &str = "usage: hypr-computer <command>
   stop <agent>     stop the agents of that name, or that session number
   resume <agent>   let them go on
   take <agent>     take over that agent's screen: your pointer and keys go to it
-  give             hand back the agent's screen you took over";
+  give             hand back the agent's screen you took over
+  log <agent>      show what the agents of that name, or that session number, did";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
