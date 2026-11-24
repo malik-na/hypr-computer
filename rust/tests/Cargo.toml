@@ -177,6 +177,10 @@ path = "profile_command_spec.rs"
 name = "open_url_profile_spec"
 path = "open_url_profile_spec.rs"
 
+[[test]]
+name = "profile_lock_spec"
+path = "profile_lock_spec.rs"
+
 # The tiny Wayland app the tests put on a screen (see support/app.rs).
 [[bin]]
 name = "hc-test-app"
