@@ -42,6 +42,13 @@ fn main() -> ExitCode {
         .with(filter)
         .init();
 
+    let program = match screen_program() {
+        Ok(program) => program,
+        Err(e) => {
+            eprintln!("hypr-computer-daemon: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
     let listening = match listen::listen(&mut fds, std::env::var_os("XDG_RUNTIME_DIR").as_deref()) {
         Ok(l) => l,
         Err(e) => {
@@ -50,13 +57,7 @@ fn main() -> ExitCode {
         }
     };
     info!("{}", listening.describe());
-    let screens = match screen_program() {
-        Ok(program) => Arc::new(ScreenProcesses::new(program, listening.dir.clone())),
-        Err(e) => {
-            eprintln!("hypr-computer-daemon: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
+    let screens = Arc::new(ScreenProcesses::new(program, listening.dir.clone()));
 
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -78,11 +79,21 @@ fn main() -> ExitCode {
 }
 
 /// The screen program: `$HYPR_COMPUTER_SCREEN` if set, otherwise
-/// `hypr-computer-screen` next to this program.
+/// `hypr-computer-screen` next to this program. Without one, every agent
+/// would connect only to be dropped, so the daemon doesn't start.
 fn screen_program() -> Result<PathBuf, String> {
-    if let Some(program) = std::env::var_os("HYPR_COMPUTER_SCREEN") {
-        return Ok(program.into());
+    let program = match std::env::var_os("HYPR_COMPUTER_SCREEN") {
+        Some(program) => PathBuf::from(program),
+        None => std::env::current_exe()
+            .map_err(|e| format!("can't find my own program: {e}"))?
+            .with_file_name("hypr-computer-screen"),
+    };
+    if !program.is_file() {
+        return Err(format!(
+            "there is no screen program at {}; install hypr-computer-screen next to \
+             hypr-computer-daemon, or set HYPR_COMPUTER_SCREEN to its path",
+            program.display()
+        ));
     }
-    let me = std::env::current_exe().map_err(|e| format!("can't find my own program: {e}"))?;
-    Ok(me.with_file_name("hypr-computer-screen"))
+    Ok(program)
 }

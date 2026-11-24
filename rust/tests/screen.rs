@@ -5,8 +5,10 @@
 mod support;
 
 use std::fs;
+use std::io::Read;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
+use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use serde_json::json;
@@ -215,5 +217,71 @@ fn when_the_daemon_stops_every_screen_goes_with_it() {
         daemon
             .log()
             .contains("session 2 ended (the daemon is stopping)")
+    );
+}
+
+/// A screen that passes its readiness check, then breaks the protocol and
+/// hangs, deaf even to its stdin closing.
+#[test]
+fn a_screen_that_stops_making_sense_ends_its_session_instead_of_failing_every_call() {
+    let env = Env::new();
+    let shot = env.path("shot.png");
+    let mut png = Vec::new();
+    let mut encoder = png::Encoder::new(&mut png, 1280, 800);
+    encoder.set_color(png::ColorType::Rgb);
+    encoder
+        .write_header()
+        .unwrap()
+        .write_image_data(&vec![0; 1280 * 800 * 3])
+        .unwrap();
+    fs::write(&shot, &png).unwrap();
+    let daemon = daemon_with_screen(
+        &env,
+        &format!(
+            "echo ready
+             read request; printf 'png %s\\n' {len}; cat '{shot}'
+             read request; echo nonsense
+             exec sleep 15",
+            len = png.len(),
+            shot = shot.display()
+        ),
+    );
+    let mut shim = Shim::start(&env);
+    shim.initialize();
+    daemon.wait_for_log("session 1: screen ready");
+
+    let failed = shim.call("screenshot", json!({}));
+    assert_eq!(failed["isError"], true, "{failed}");
+    daemon.wait_for_log("session 1 ended");
+    assert!(
+        !shim.wait_exit().success(),
+        "the agent's connection should close"
+    );
+}
+
+#[test]
+fn the_daemon_refuses_to_start_without_its_screen_program() {
+    let env = Env::new();
+    let missing = env.path("no-such-screen");
+    let mut daemon = env
+        .command(&support::daemon_bin())
+        .env("HYPR_COMPUTER_SCREEN", &missing)
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let status = support::wait_exit(&mut daemon, support::TIMEOUT);
+    let _ = daemon.kill();
+    let mut stderr = String::new();
+    daemon
+        .stderr
+        .take()
+        .unwrap()
+        .read_to_string(&mut stderr)
+        .unwrap();
+    assert!(!status.expect("the daemon started anyway").success());
+    assert!(stderr.contains(&missing.display().to_string()), "{stderr}");
+    assert!(
+        !env.socket().exists(),
+        "it shouldn't listen without a screen to give"
     );
 }

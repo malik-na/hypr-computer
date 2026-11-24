@@ -11,7 +11,6 @@ use std::time::Duration;
 
 use domain::SessionId;
 use ports::{BoxFuture, Png, Screen, ScreenError, ScreenProcess, Screens};
-use rustix::io::Errno;
 use rustix::process::{Pid, Signal, kill_process_group, test_kill_process_group};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{ChildStdin, ChildStdout, Command};
@@ -163,20 +162,40 @@ impl ScreenChild {
         let Some(open) = pipe.as_mut() else {
             return Err(ScreenError("the screen stopped answering".to_owned()));
         };
-        match timeout(ANSWER_TIME, open.ask(request)).await {
-            Ok(Ok(answer)) => answer.map_err(ScreenError),
-            Ok(Err(broke)) => {
-                *pipe = None;
-                Err(broke)
-            }
-            Err(_) => {
-                *pipe = None;
-                Err(ScreenError(format!(
-                    "the screen didn't answer within {}s",
-                    ANSWER_TIME.as_secs()
-                )))
-            }
+        let broke = match timeout(ANSWER_TIME, open.ask(request)).await {
+            Ok(Ok(answer)) => return answer.map_err(ScreenError),
+            Ok(Err(broke)) => broke,
+            Err(_) => ScreenError(format!(
+                "the screen didn't answer within {}s",
+                ANSWER_TIME.as_secs()
+            )),
+        };
+        self.give_up(&mut pipe, &broke);
+        Err(broke)
+    }
+
+    /// The pipe can't be trusted any more. Stops using it, and kills the
+    /// screen: its session then ends, as for any screen that exits, instead
+    /// of failing every call from now on.
+    fn give_up(&self, pipe: &mut Option<Pipe>, why: &ScreenError) {
+        warn!(
+            "screen {} stopped making sense ({why}); killing it",
+            self.pid
+        );
+        *pipe = None;
+        self.kill_group();
+    }
+
+    /// Sends SIGKILL to the screen's group; `false` once nothing in it is
+    /// left that may be signalled. Until the screen is reaped, the group is
+    /// surely its own. After that, it is only while something is still in it.
+    fn kill_group(&self) -> bool {
+        let reaped = *self.exited.borrow();
+        if reaped && test_kill_process_group(self.group).is_err() {
+            return false;
         }
+        let _ = kill_process_group(self.group, Signal::KILL);
+        true
     }
 }
 
@@ -197,7 +216,7 @@ impl ScreenProcess for ScreenChild {
             let Some(open) = pipe.as_mut() else {
                 return Err(ScreenError("the screen stopped answering".to_owned()));
             };
-            let said = match timeout(START_TIME, open.read_line()).await {
+            let broke = match timeout(START_TIME, open.read_line()).await {
                 Ok(Ok(line)) if line.trim_end() == READY => return Ok(()),
                 Ok(Ok(line)) => ScreenError(format!(
                     "the screen said {:?} instead of {READY:?}",
@@ -209,8 +228,8 @@ impl ScreenProcess for ScreenChild {
                     START_TIME.as_secs()
                 )),
             };
-            *pipe = None;
-            Err(said)
+            self.give_up(&mut pipe, &broke);
+            Err(broke)
         })
     }
 
@@ -240,9 +259,8 @@ impl ScreenProcess for ScreenChild {
 
     fn teardown(&self) -> BoxFuture<'_, ()> {
         Box::pin(async move {
-            // Until nothing is left in the group: the screen, reaped, and all it started.
-            while test_kill_process_group(self.group) != Err(Errno::SRCH) {
-                let _ = kill_process_group(self.group, Signal::KILL);
+            // Until the screen is reaped and nothing it started is left.
+            while self.kill_group() {
                 tokio::time::sleep(Duration::from_millis(5)).await;
             }
             // A killed screen leaves its socket and lock file behind.

@@ -1,6 +1,7 @@
 //! Getting the listening socket: from systemd if it passed one, otherwise
-//! bound at `$XDG_RUNTIME_DIR/hypr-computer/daemon.sock` in a 0700 dir. The
-//! screens keep their files in the same dir.
+//! bound at `$XDG_RUNTIME_DIR/hypr-computer/daemon.sock`. Either way the
+//! daemon's dir, `$XDG_RUNTIME_DIR/hypr-computer`, is made private (0700):
+//! the screens keep their files there.
 
 use std::ffi::OsStr;
 use std::fs;
@@ -18,7 +19,7 @@ pub struct Listening {
     pub listener: UnixListener,
     /// The socket file to remove on exit; `None` when systemd owns it.
     pub owned_path: Option<PathBuf>,
-    /// The directory the socket is in.
+    /// The daemon's private dir.
     pub dir: PathBuf,
 }
 
@@ -32,29 +33,21 @@ impl Listening {
 }
 
 pub fn listen(fds: &mut ListenFd, runtime_dir: Option<&OsStr>) -> Result<Listening, String> {
-    if fds.len() > 0 {
-        let listener = match fds.take_unix_listener(0) {
-            Ok(Some(listener)) => listener,
-            Ok(None) => return Err("systemd passed no socket at fd 3".to_owned()),
-            Err(e) => {
-                return Err(format!(
-                    "systemd's socket at fd 3 isn't a listening unix socket: {e}"
-                ));
-            }
-        };
-        let dir = listener
-            .local_addr()
-            .ok()
-            .and_then(|a| a.as_pathname()?.parent().map(Path::to_path_buf))
-            .ok_or("systemd's socket at fd 3 has no path, so the screens have nowhere to go")?;
-        return Ok(Listening {
-            listener,
-            owned_path: None,
-            dir,
-        });
-    }
     let dir = paths::daemon_dir(runtime_dir).map_err(|e| e.to_string())?;
     make_private_dir(&dir).map_err(|e| format!("can't create {}: {e}", dir.display()))?;
+    if fds.len() > 0 {
+        return match fds.take_unix_listener(0) {
+            Ok(Some(listener)) => Ok(Listening {
+                listener,
+                owned_path: None,
+                dir,
+            }),
+            Ok(None) => Err("systemd passed no socket at fd 3".to_owned()),
+            Err(e) => Err(format!(
+                "systemd's socket at fd 3 isn't a listening unix socket: {e}"
+            )),
+        };
+    }
     let path = dir.join(paths::SOCKET_NAME);
     let listener = bind(&path)?;
     Ok(Listening {
