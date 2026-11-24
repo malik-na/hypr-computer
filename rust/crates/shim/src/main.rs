@@ -43,10 +43,15 @@ fn main() -> ExitCode {
     let (done, closed) = mpsc::channel();
     let done_up = done.clone();
     thread::spawn(move || {
-        let _ = pump(io::stdin().lock(), &to_daemon);
+        // Reading our stdin ending or failing is the agent leaving; failing to
+        // write to the daemon is the daemon going away.
+        let who = match pump(io::stdin().lock(), &to_daemon) {
+            Ok(()) | Err(Broke::Reading) => Closed::Agent,
+            Err(Broke::Writing) => Closed::Daemon,
+        };
         // Report before anything closes the socket, so the other thread can't
         // mistake our own close for the daemon's. Exiting closes the socket.
-        let _ = done_up.send(Closed::Agent);
+        let _ = done_up.send(who);
     });
     thread::spawn(move || {
         let who = match pump(&to_agent, io::stdout().lock()) {
