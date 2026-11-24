@@ -29,7 +29,8 @@ fn handshake_then_the_tool_list() {
             "type",
             "key",
             "scroll",
-            "drag"
+            "drag",
+            "open_url"
         ]
     );
 
