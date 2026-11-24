@@ -36,6 +36,7 @@ use wayland_protocols::wp::viewporter::client::{wp_viewport, wp_viewporter};
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 
 use crate::banner::{Banner, COLOUR};
+use crate::share::Share;
 use crate::state::{HEIGHT, State, WIDTH};
 use crate::user::ViewSeat;
 
@@ -81,6 +82,8 @@ pub struct View {
     /// The desktop's pointer and keyboard, for taking over.
     pub seat: ViewSeat,
     pub banner: Banner,
+    /// The user's clipboard, for sharing it during a take-over.
+    pub share: Share,
 }
 
 /// A surface whose picture is scaled to the size it is given.
@@ -118,6 +121,8 @@ impl State {
         let wm: xdg_wm_base::XdgWmBase = globals.bind(&qh, 1..=6, ()).map_err(|e| failed(&e))?;
         // Without a seat the view is only ever watched.
         let seat: Option<wl_seat::WlSeat> = globals.bind(&qh, 1..=5, ()).ok();
+        let clipboard = globals.bind(&qh, 1..=3, ()).ok();
+        let share = Share::new(clipboard, seat.as_ref(), &qh);
 
         let memory = File::from(
             memfd_create("hypr-computer-view", MemfdFlags::CLOEXEC).map_err(|e| failed(&e))?,
@@ -238,6 +243,7 @@ impl State {
             fit: fit(WIDTH, HEIGHT),
             seat: ViewSeat::new(seat),
             banner,
+            share,
         });
         self.flush_view();
         Ok(())
@@ -344,6 +350,10 @@ impl Dispatch<xdg_wm_base::XdgWmBase, ()> for State {
 }
 
 impl View {
+    pub fn queue_handle(&self) -> QueueHandle<State> {
+        self.qh.clone()
+    }
+
     /// Whether `surface` is the picture of the screen.
     pub fn is_picture(&self, surface: &wl_surface::WlSurface) -> bool {
         self.picture.surface == *surface
