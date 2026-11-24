@@ -1,17 +1,22 @@
 //! The daemon's side of a screen: starting the process, asking it for
 //! pixels, and tearing it down.
 
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io;
 use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
+use std::sync::{Arc, Mutex as SyncMutex, PoisonError};
 use std::time::Duration;
 
 use domain::SessionId;
-use ports::{BoxFuture, Png, Screen, ScreenError, ScreenProcess, Screens};
-use rustix::process::{Pid, Signal, kill_process_group, test_kill_process_group};
+use ports::{AppCommand, BoxFuture, Launched, Png, Screen, ScreenError, ScreenProcess, Screens};
+use rustix::process::{
+    Pid, Signal, WaitOptions, getpid, kill_process, kill_process_group, set_child_subreaper,
+    test_kill_process_group, waitpid,
+};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{ChildStdin, ChildStdout, Command};
 use tokio::sync::{Mutex, watch};
@@ -19,7 +24,8 @@ use tokio::time::timeout;
 use tracing::warn;
 
 use crate::SIZE;
-use crate::protocol::{READY, Reply, Request};
+use crate::protocol::{READY, Reply, Request, Status};
+use crate::tree;
 
 /// How long a screen may take to say it is up.
 const START_TIME: Duration = Duration::from_secs(10);
@@ -32,15 +38,31 @@ const SOCKET: &str = "wayland";
 
 /// Starts screens as `hypr-computer-screen` processes, each with its files in
 /// a directory of its own, `<dir>/screen-<session number>/`.
+///
+/// The process that makes one becomes a subreaper: a screen adopts what its
+/// apps leave behind, and when a screen dies first, what it had comes here,
+/// where its session's teardown still finds it. This process must start no
+/// child but screens, since any other child is taken for such a leftover.
 #[derive(Debug)]
 pub struct ScreenProcesses {
     program: PathBuf,
     dir: PathBuf,
+    live: LiveScreens,
 }
+
+/// The pids of the screens not yet reaped.
+type LiveScreens = Arc<SyncMutex<HashSet<u32>>>;
 
 impl ScreenProcesses {
     pub fn new(program: PathBuf, dir: PathBuf) -> Self {
-        Self { program, dir }
+        if let Err(e) = set_child_subreaper(Some(getpid())) {
+            warn!("can't adopt what dead screens leave behind: {e}");
+        }
+        Self {
+            program,
+            dir,
+            live: LiveScreens::default(),
+        }
     }
 }
 
@@ -53,6 +75,8 @@ impl Screens for ScreenProcesses {
             let _ = fs::remove_dir_all(&dir);
             ScreenError(why)
         };
+        // Held until the screen is listed, so no teardown takes it for a leftover.
+        let mut live = self.live.lock().unwrap_or_else(PoisonError::into_inner);
         let mut child = Command::new(&self.program)
             .arg(dir.join(SOCKET))
             .stdin(Stdio::piped())
@@ -73,16 +97,24 @@ impl Screens for ScreenProcesses {
             .ok()
             .and_then(Pid::from_raw)
             .ok_or_else(|| failed(format!("the screen got an impossible pid, {pid}")))?;
+        live.insert(pid);
+        drop(live);
 
         let (gone, exited) = watch::channel(false);
+        let live = self.live.clone();
         tokio::spawn(async move {
             let _ = child.wait().await;
+            live.lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .remove(&pid);
             gone.send_replace(true);
         });
         Ok(Arc::new(ScreenChild {
             pid,
             group,
             dir,
+            launched: AtomicU64::new(0),
+            live: self.live.clone(),
             pipe: Mutex::new(Some(Pipe {
                 stdin,
                 stdout: BufReader::new(stdout),
@@ -102,10 +134,15 @@ fn fresh_private_dir(dir: &Path) -> io::Result<()> {
     fs::DirBuilder::new().mode(0o700).create(dir)
 }
 
-struct ScreenChild {
+pub(crate) struct ScreenChild {
     pid: u32,
+    /// The screen's process group, which its apps start in.
     group: Pid,
-    dir: PathBuf,
+    /// The screen's own directory: its socket, and its apps' output.
+    pub(crate) dir: PathBuf,
+    /// How many apps have been started on it.
+    pub(crate) launched: AtomicU64,
+    live: LiveScreens,
     /// `None` once the screen broke the protocol or stopped answering: the
     /// pipe may be out of step, so nothing more is asked of it.
     pipe: Mutex<Option<Pipe>>,
@@ -115,6 +152,20 @@ struct ScreenChild {
 struct Pipe {
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
+}
+
+/// What the screen answered.
+enum Answer {
+    Png(Vec<u8>),
+    Status(Status),
+    Launched(u32),
+    /// `None` while the app runs, then its exit status.
+    App(Option<String>),
+}
+
+/// The screen answered, but not what was asked; `Pipe::ask` rules it out.
+fn mismatch() -> ScreenError {
+    ScreenError("the screen's answer doesn't fit the question".to_owned())
 }
 
 impl Pipe {
@@ -127,9 +178,9 @@ impl Pipe {
         }
     }
 
-    /// Sends `request`; `Err` if the pipe broke, `Ok(Err)` if the screen
-    /// answered with an error.
-    async fn ask(&mut self, request: Request) -> Result<Result<Vec<u8>, String>, ScreenError> {
+    /// Sends `request`; `Err` if the pipe broke or the answer doesn't fit
+    /// the request, `Ok(Err)` if the screen answered with an error.
+    async fn ask(&mut self, request: &Request) -> Result<Result<Answer, String>, ScreenError> {
         let wrote = async {
             self.stdin.write_all(request.line().as_bytes()).await?;
             self.stdin.flush().await
@@ -138,27 +189,76 @@ impl Pipe {
             .await
             .map_err(|e| ScreenError(format!("can't write to the screen: {e}")))?;
         let line = self.read_line().await?;
-        match Reply::parse(&line) {
-            Some(Reply::Png(len)) if len <= MAX_REPLY => {
+        match (request, Reply::parse(&line)) {
+            (Request::Screenshot, Some(Reply::Png(len))) if len <= MAX_REPLY => {
                 let mut bytes = vec![0; len];
                 self.stdout
                     .read_exact(&mut bytes)
                     .await
                     .map_err(|e| ScreenError(format!("can't read from the screen: {e}")))?;
-                Ok(Ok(bytes))
+                Ok(Ok(Answer::Png(bytes)))
             }
-            Some(Reply::Error(why)) => Ok(Err(why)),
+            (Request::Status, Some(Reply::Status(status))) => Ok(Ok(Answer::Status(status))),
+            (Request::Launch { .. }, Some(Reply::Launched(pid))) => Ok(Ok(Answer::Launched(pid))),
+            (Request::App(_), Some(Reply::Running)) => Ok(Ok(Answer::App(None))),
+            (Request::App(_), Some(Reply::Ended(status))) => Ok(Ok(Answer::App(Some(status)))),
+            (_, Some(Reply::Error(why))) => Ok(Err(why)),
             _ => Err(ScreenError(format!(
-                "the screen answered {:?}",
-                line.trim_end()
+                "the screen answered {:?} to {:?}",
+                line.trim_end(),
+                request.line().trim_end()
             ))),
         }
     }
 }
 
 impl ScreenChild {
-    async fn ask(&self, request: Request) -> Result<Vec<u8>, ScreenError> {
-        let mut pipe = self.pipe.lock().await;
+    pub(crate) async fn status(&self) -> Result<Status, ScreenError> {
+        self.status_on(&mut *self.pipe.lock().await).await
+    }
+
+    /// The status, with the pipe already locked.
+    async fn status_on(&self, pipe: &mut Option<Pipe>) -> Result<Status, ScreenError> {
+        match self.ask_on(pipe, &Request::Status).await? {
+            Answer::Status(status) => Ok(status),
+            _ => Err(mismatch()),
+        }
+    }
+
+    /// Asks the screen to start an app; its pid.
+    pub(crate) async fn launched_pid(&self, launch: Request) -> Result<u32, ScreenError> {
+        match self.ask_on(&mut *self.pipe.lock().await, &launch).await? {
+            Answer::Launched(pid) => Ok(pid),
+            _ => Err(mismatch()),
+        }
+    }
+
+    /// `None` while the app with this pid runs, then its exit status.
+    pub(crate) async fn app_ended(&self, pid: u32) -> Result<Option<String>, ScreenError> {
+        match self
+            .ask_on(&mut *self.pipe.lock().await, &Request::App(pid))
+            .await?
+        {
+            Answer::App(ended) => Ok(ended),
+            _ => Err(mismatch()),
+        }
+    }
+
+    async fn png(&self) -> Result<Vec<u8>, ScreenError> {
+        match self
+            .ask_on(&mut *self.pipe.lock().await, &Request::Screenshot)
+            .await?
+        {
+            Answer::Png(png) => Ok(png),
+            _ => Err(mismatch()),
+        }
+    }
+
+    async fn ask_on(
+        &self,
+        pipe: &mut Option<Pipe>,
+        request: &Request,
+    ) -> Result<Answer, ScreenError> {
         let Some(open) = pipe.as_mut() else {
             return Err(ScreenError("the screen stopped answering".to_owned()));
         };
@@ -170,7 +270,7 @@ impl ScreenChild {
                 ANSWER_TIME.as_secs()
             )),
         };
-        self.give_up(&mut pipe, &broke);
+        self.give_up(pipe, &broke);
         Err(broke)
     }
 
@@ -197,11 +297,66 @@ impl ScreenChild {
         let _ = kill_process_group(self.group, Signal::KILL);
         true
     }
+
+    /// Sends SIGKILL to all the session started; `false` once nothing is
+    /// left. Its apps, and all they started in any group or session, are
+    /// below the screen, which adopts what they orphan: they go first, and
+    /// the screen once nothing below it runs. What a screen that died first
+    /// left behind came to this process, and goes too. Nothing here waits on
+    /// the screen: a hung one is killed all the same.
+    fn kill_all(&self) -> bool {
+        let processes = tree::processes();
+        let mut left = false;
+        if !*self.exited.borrow() {
+            let apps = tree::below(&processes, &[self.pid]);
+            apps.iter().for_each(|&pid| kill(pid));
+            left = tree::any_running(&processes, &apps);
+        }
+        if !left {
+            left = self.kill_group();
+        }
+        let orphans = self.orphans(&processes);
+        tree::below(&processes, &orphans)
+            .iter()
+            .chain(&orphans)
+            .for_each(|&pid| kill(pid));
+        for &pid in &orphans {
+            if let Some(pid) = to_pid(pid) {
+                let _ = waitpid(Some(pid), WaitOptions::NOHANG);
+            }
+        }
+        left || !orphans.is_empty()
+    }
+
+    /// This process's children that aren't screens: what dead screens left.
+    fn orphans(&self, processes: &HashMap<u32, tree::Process>) -> Vec<u32> {
+        let me = std::process::id();
+        let live = self.live.lock().unwrap_or_else(PoisonError::into_inner);
+        processes
+            .iter()
+            .filter(|&(pid, p)| p.parent == me && !live.contains(pid))
+            .map(|(&pid, _)| pid)
+            .collect()
+    }
+}
+
+fn to_pid(pid: u32) -> Option<Pid> {
+    i32::try_from(pid).ok().and_then(Pid::from_raw)
+}
+
+fn kill(pid: u32) {
+    if let Some(pid) = to_pid(pid) {
+        let _ = kill_process(pid, Signal::KILL);
+    }
 }
 
 impl Screen for ScreenChild {
     fn screenshot(&self) -> BoxFuture<'_, Result<Png, ScreenError>> {
-        Box::pin(async move { self.ask(Request::Screenshot).await.map(Png) })
+        Box::pin(async move { self.png().await.map(Png) })
+    }
+
+    fn launch(&self, app: AppCommand) -> BoxFuture<'_, Result<Launched, ScreenError>> {
+        Box::pin(self.start_app(app))
     }
 }
 
@@ -235,7 +390,7 @@ impl ScreenProcess for ScreenChild {
 
     fn verify(&self) -> BoxFuture<'_, Result<(), ScreenError>> {
         Box::pin(async move {
-            let shot = self.ask(Request::Screenshot).await?;
+            let shot = self.png().await?;
             match png_size(&shot) {
                 Some(size) if size == SIZE => Ok(()),
                 Some((w, h)) => Err(ScreenError(format!(
@@ -260,7 +415,7 @@ impl ScreenProcess for ScreenChild {
     fn teardown(&self) -> BoxFuture<'_, ()> {
         Box::pin(async move {
             // Until the screen is reaped and nothing it started is left.
-            while self.kill_group() {
+            while self.kill_all() {
                 tokio::time::sleep(Duration::from_millis(5)).await;
             }
             // A killed screen leaves its socket and lock file behind.

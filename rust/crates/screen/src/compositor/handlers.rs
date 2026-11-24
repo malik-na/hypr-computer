@@ -53,6 +53,7 @@ impl CompositorHandler for State {
             if let Some(window) = self.window_for(&root) {
                 window.on_commit();
             }
+            self.note_drawn(&root);
         }
         if let Some(toplevel) = self.window_for(surface).and_then(|w| w.toplevel())
             && !toplevel.is_initial_configure_sent()

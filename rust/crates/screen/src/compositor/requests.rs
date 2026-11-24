@@ -3,7 +3,7 @@
 
 use std::io::{self, BufRead, Write};
 
-use screen::protocol::{Reply, Request};
+use screen::protocol::{Reply, Request, Status};
 use smithay::reexports::calloop::channel::Sender;
 
 use crate::state::State;
@@ -25,16 +25,39 @@ pub fn read(input: impl BufRead, to_loop: &Sender<Incoming>) {
 /// Answers one request. `Err` only if the answer can't be written: the
 /// daemon is gone.
 pub fn answer(state: &mut State, request: Incoming, out: &mut impl Write) -> io::Result<()> {
-    let reply = match request {
-        Ok(Request::Screenshot) => state.screenshot(),
-        Err(line) => Err(format!("unknown request {line:?}")),
-    };
-    match reply {
-        Ok(png) => {
-            out.write_all(Reply::Png(png.len()).line().as_bytes())?;
-            out.write_all(&png)?;
+    match request {
+        Ok(Request::Screenshot) => match state.screenshot() {
+            Ok(png) => {
+                out.write_all(Reply::Png(png.len()).line().as_bytes())?;
+                out.write_all(&png)?;
+            }
+            Err(why) => out.write_all(Reply::Error(why).line().as_bytes())?,
+        },
+        Ok(Request::Status) => {
+            let status = Status {
+                windows: state.windows_drawn,
+            };
+            out.write_all(Reply::Status(status).line().as_bytes())?;
         }
-        Err(why) => out.write_all(Reply::Error(why).line().as_bytes())?,
+        Ok(Request::Launch { n, program, args }) => {
+            let reply = match state.apps.launch(n, &program, &args) {
+                Ok(pid) => Reply::Launched(pid),
+                Err(e) => Reply::Error(e.to_string()),
+            };
+            out.write_all(reply.line().as_bytes())?;
+        }
+        Ok(Request::App(pid)) => {
+            let reply = match state.apps.ended(pid) {
+                Ok(None) => Reply::Running,
+                Ok(Some(status)) => Reply::Ended(status.to_owned()),
+                Err(why) => Reply::Error(why),
+            };
+            out.write_all(reply.line().as_bytes())?;
+        }
+        Err(line) => {
+            let why = format!("unknown request {line:?}");
+            out.write_all(Reply::Error(why).line().as_bytes())?;
+        }
     }
     out.flush()
 }

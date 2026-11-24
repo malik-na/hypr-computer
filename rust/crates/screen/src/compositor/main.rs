@@ -1,12 +1,14 @@
 //! hypr-computer-screen: one agent's screen.
 //!
-//! A headless Wayland compositor built on Smithay, rendering in software. The
-//! agent's apps connect to the Wayland socket given as the only argument; the
-//! daemon reads the screen over stdin and stdout (see `screen::protocol`).
+//! A headless Wayland compositor built on Smithay, rendering in software. It
+//! starts the agent's apps (see `apps.rs`), which connect to the Wayland
+//! socket given as the only argument; the daemon asks for them and reads the
+//! screen over stdin and stdout (see `screen::protocol`).
 //! There is no window on the host and no input device, so nothing of the
 //! user's reaches it. It exits when its stdin closes.
 #![forbid(unsafe_code)]
 
+mod apps;
 mod capture;
 mod clipboard;
 mod handlers;
@@ -29,6 +31,7 @@ use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay::reexports::calloop::{EventLoop, Interest, Mode, PostAction, channel};
 use smithay::reexports::wayland_server::{Display, ListeningSocket};
 
+use crate::apps::Apps;
 use crate::state::{ClientState, State};
 
 /// How often apps are told to draw their next frame, at most.
@@ -55,7 +58,9 @@ fn run(socket: PathBuf) -> Result<(), Box<dyn Error>> {
     }
     let mut event_loop: EventLoop<State> = EventLoop::try_new()?;
     let mut display: Display<State> = Display::new()?;
-    let mut state = State::new(display.handle(), event_loop.get_signal())?;
+    let apps =
+        Apps::new(&socket).map_err(|e| format!("can't adopt what apps leave behind: {e}"))?;
+    let mut state = State::new(display.handle(), event_loop.get_signal(), apps)?;
     let handle = event_loop.handle();
 
     // Apps connecting.
@@ -99,6 +104,7 @@ fn run(socket: PathBuf) -> Result<(), Box<dyn Error>> {
 
     handle.insert_source(Timer::from_duration(FRAME), |_, _, state| {
         state.frame_tick();
+        state.apps.reap();
         TimeoutAction::ToDuration(FRAME)
     })?;
 

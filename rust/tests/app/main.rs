@@ -93,6 +93,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     app.note(&json!({
         "event": "ready",
         "pid": process::id(),
+        "display": env::var("DISPLAY").ok(),
         "seat": app.seat,
     }));
     loop {

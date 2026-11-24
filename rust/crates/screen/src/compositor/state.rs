@@ -23,6 +23,7 @@ use smithay::wayland::shell::xdg::XdgShellState;
 use smithay::wayland::shell::xdg::decoration::XdgDecorationState;
 use smithay::wayland::shm::ShmState;
 
+use crate::apps::Apps;
 use crate::seat::new_seat;
 
 /// The screen's size as Smithay wants it.
@@ -42,6 +43,9 @@ pub struct State {
     pub popups: PopupManager,
     /// An app drew something since apps were last told to draw again.
     pub dirty: bool,
+    /// How many windows have drawn their first picture.
+    pub windows_drawn: u64,
+    pub apps: Apps,
 
     pub renderer: PixmanRenderer,
     /// What the screen is rendered into; kept, so a render redraws only what changed.
@@ -59,7 +63,11 @@ pub struct State {
 }
 
 impl State {
-    pub fn new(display: DisplayHandle, loop_signal: LoopSignal) -> Result<Self, Box<dyn Error>> {
+    pub fn new(
+        display: DisplayHandle,
+        loop_signal: LoopSignal,
+        apps: Apps,
+    ) -> Result<Self, Box<dyn Error>> {
         let mut renderer = PixmanRenderer::new()?;
         let target = renderer.create_buffer(Fourcc::Argb8888, (WIDTH, HEIGHT).into())?;
 
@@ -108,6 +116,8 @@ impl State {
             shown: None,
             popups: PopupManager::default(),
             dirty: true,
+            windows_drawn: 0,
+            apps,
             renderer,
             target,
             damage,

@@ -1011,6 +1011,7 @@ dependencies = [
  "png",
  "ports",
  "rustix",
+ "serde_json",
  "smithay",
  "tokio",
  "tracing",

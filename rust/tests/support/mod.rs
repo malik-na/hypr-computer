@@ -277,6 +277,17 @@ pub fn agent(env: &Env) -> Shim {
     shim
 }
 
+/// The text of a tool's result.
+pub fn text(result: &Value) -> String {
+    let content = result["content"].as_array();
+    let content = content.unwrap_or_else(|| panic!("no content: {result}"));
+    content
+        .iter()
+        .filter_map(|block| block["text"].as_str())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// The real shim, driven over its stdin and stdout as an agent would.
 pub struct Shim {
     child: Child,
