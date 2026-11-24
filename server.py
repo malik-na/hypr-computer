@@ -1984,23 +1984,24 @@ def stop_agent_display() -> str:
                                             "until it starts again." if parked else "") + (" " + lost if lost else ""))
 
 
-def exit_on_sigterm() -> None:
-    """On SIGTERM, cleans up and leaves at once (a thread waiting on stdin would keep a normal exit waiting).
-    Python runs a signal handler only in the main thread, once it wakes; the kernel may give SIGTERM to another
-    thread while the main thread sleeps in select(), and then it never wakes. The thread that gets the signal
-    writes it to the wakeup fd, and a thread of its own acts on it."""
+def exit_on_signal() -> None:
+    """On SIGTERM or Ctrl-C (SIGINT), cleans up and leaves at once (a thread waiting on stdin would keep a normal
+    exit waiting). Python runs a signal handler only in the main thread, once it wakes; the kernel may give the
+    signal to another thread while the main thread sleeps in select(), and then it never wakes. The thread that
+    gets the signal writes it to the wakeup fd, and a thread of its own acts on it."""
     r, w = os.pipe()
     os.set_blocking(w, False)
-    signal.signal(signal.SIGTERM, lambda *_: None)
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, lambda *_: None)
     signal.set_wakeup_fd(w, warn_on_full_buffer=False)
 
     def wait() -> None:
-        while os.read(r, 1) != bytes([signal.SIGTERM]):
+        while os.read(r, 1)[0] not in (signal.SIGTERM, signal.SIGINT):
             pass
         shutdown()
         os._exit(0)
 
-    threading.Thread(target=wait, name="sigterm", daemon=True).start()
+    threading.Thread(target=wait, name="exit-on-signal", daemon=True).start()
 
 
 def shutdown() -> None:
@@ -2727,7 +2728,7 @@ if __name__ == "__main__":
     _unconfined = confine()
     if _unconfined:
         print(f"hypr-computer: the network is not blocked: {_unconfined}", file=sys.stderr)
-    exit_on_sigterm()
+    exit_on_signal()
     try:
         build_server().run()
     finally:
