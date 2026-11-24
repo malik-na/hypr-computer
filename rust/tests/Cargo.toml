@@ -189,6 +189,10 @@ path = "password_manager_spec.rs"
 name = "allowed_sites_spec"
 path = "allowed_sites_spec.rs"
 
+[[test]]
+name = "browser_proxy_spec"
+path = "browser_proxy_spec.rs"
+
 # The tiny Wayland app the tests put on a screen (see support/app.rs).
 [[bin]]
 name = "hc-test-app"
