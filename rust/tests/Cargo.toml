@@ -164,6 +164,10 @@ path = "handback_escape_spec.rs"
 name = "clipboard_spec"
 path = "clipboard_spec.rs"
 
+[[test]]
+name = "takeover_agents_spec"
+path = "takeover_agents_spec.rs"
+
 # The tiny Wayland app the tests put on a screen (see support/app.rs).
 [[bin]]
 name = "hc-test-app"
