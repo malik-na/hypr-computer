@@ -406,12 +406,17 @@ impl Shim {
 
     /// The MCP handshake; returns the `initialize` result.
     pub fn initialize(&mut self) -> Value {
+        self.initialize_as("workspace-tests")
+    }
+
+    /// The MCP handshake of an agent called `name`.
+    pub fn initialize_as(&mut self, name: &str) -> Value {
         let resp = self.request(
             "initialize",
             json!({
                 "protocolVersion": "2025-06-18",
                 "capabilities": {},
-                "clientInfo": {"name": "workspace-tests", "version": "0"}
+                "clientInfo": {"name": name, "version": "0"}
             }),
         );
         assert!(resp.get("error").is_none(), "initialize failed: {resp}");

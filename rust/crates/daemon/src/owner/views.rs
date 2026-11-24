@@ -1,5 +1,6 @@
 //! Live views: each session's screen opens as a window on the user's desktop
-//! once the screen is ready, and closes with it.
+//! once the screen is ready and the agent has said its name, and closes with
+//! it.
 
 use domain::SessionId;
 use domain::lifecycle::SessionState;
@@ -21,7 +22,15 @@ pub enum View {
 }
 
 impl State {
-    /// Opens session `id`'s view, if its screen is ready and it has none yet.
+    pub(super) fn introduce(&mut self, id: SessionId, name: String) {
+        if let Some(live) = self.sessions.data_mut(id) {
+            live.name = Some(name);
+        }
+        self.open_view(id);
+    }
+
+    /// Opens session `id`'s view, if its screen is ready, its agent has said
+    /// its name, and it has none yet.
     pub(super) fn open_view(&mut self, id: SessionId) {
         if self.sessions.state(id) != Some(SessionState::Ready) {
             return;
@@ -29,10 +38,10 @@ impl State {
         let Some(live) = self.sessions.data_mut(id) else {
             return;
         };
-        let (View::None, Some(screen)) = (&live.view, &live.screen) else {
+        let (View::None, Some(name), Some(screen)) = (&live.view, &live.name, &live.screen) else {
             return;
         };
-        let title = title(id);
+        let title = title(name, id);
         let (screen, desktop) = (screen.clone(), self.desktop.clone());
         live.view = View::Opening;
         self.report(id, async move {

@@ -7,19 +7,22 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, Implementation,
-    ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerConfig, Tool,
+    InitializeRequestParams, InitializeResult, ListToolsResult, PaginatedRequestParams,
+    ServerCapabilities, ServerConfig, Tool,
 };
 use rmcp::service::RequestContext;
 use rmcp::{ErrorData, RoleServer, ServerHandler};
-use tools::{Admit, Content, Registry, ToolOutput, ToolSpec};
+use tools::{Content, Registry, ToolOutput, ToolSpec};
+
+use crate::owner::Gate;
 
 pub struct SessionServer {
-    session: Arc<dyn Admit>,
+    session: Arc<Gate>,
     registry: Arc<Registry>,
 }
 
 impl SessionServer {
-    pub fn new(session: Arc<dyn Admit>, registry: Arc<Registry>) -> Self {
+    pub fn new(session: Arc<Gate>, registry: Arc<Registry>) -> Self {
         Self { session, registry }
     }
 }
@@ -29,6 +32,16 @@ impl ServerHandler for SessionServer {
         let mut info = ServerConfig::new(ServerCapabilities::builder().enable_tools().build());
         info.server_info = Implementation::new("hypr-computer", env!("CARGO_PKG_VERSION"));
         info
+    }
+
+    async fn initialize(
+        &self,
+        request: InitializeRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<InitializeResult, ErrorData> {
+        self.session.introduce(request.client_info.name.clone());
+        context.peer.set_peer_info(request.clone());
+        self.negotiate_initialize(&request)
     }
 
     async fn list_tools(
