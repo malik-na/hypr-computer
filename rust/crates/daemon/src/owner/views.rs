@@ -80,6 +80,8 @@ impl State {
             .iter()
             .filter(|(_, live)| live.view == View::Refused)
             .map(|(id, _)| id)
+            // One that is ending can't take the room.
+            .filter(|id| self.sessions.state(*id) == Some(SessionState::Ready))
             .take(room)
             .collect();
         for id in waiting {
@@ -109,6 +111,8 @@ impl State {
             Err(why) => {
                 warn!("{id}: no live view: {why}");
                 live.view = View::Failed;
+                // Its room goes to an agent that is waiting.
+                self.show_waiting();
             }
         }
     }
