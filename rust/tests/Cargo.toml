@@ -139,6 +139,10 @@ path = "stop_one_spec.rs"
 name = "open_url_spec"
 path = "open_url_spec.rs"
 
+[[test]]
+name = "browser_lockdown_spec"
+path = "browser_lockdown_spec.rs"
+
 # The tiny Wayland app the tests put on a screen (see support/app.rs).
 [[bin]]
 name = "hc-test-app"
