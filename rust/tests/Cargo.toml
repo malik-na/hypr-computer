@@ -1,0 +1,28 @@
+[package]
+name = "workspace-tests"
+description = "Black-box tests that drive the real daemon and shim, and checks on the workspace's structure."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+autotests = false
+
+[lib]
+path = "lib.rs"
+
+[[test]]
+name = "daemon_shim"
+path = "daemon_shim.rs"
+
+[[test]]
+name = "socket_activation"
+path = "socket_activation.rs"
+
+[dev-dependencies]
+command-fds = "0.3.3"
+serde_json.workspace = true
+tempfile = "3.27.0"
+
+[lints]
+workspace = true
