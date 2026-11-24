@@ -39,6 +39,10 @@ const NAMES: &[&str] = &[
 const LOAD_TIME: Duration = Duration::from_secs(20);
 /// How long a loaded page may take to paint two frames.
 const PAINT_TIME: Duration = Duration::from_secs(2);
+/// The page the browser starts on. Not `about:blank`: on that, Chromium puts
+/// the keyboard in the address bar, and it stays there through `open_url`,
+/// so the agent's typing would go there and not to the page.
+const START_PAGE: &str = "data:,";
 /// Resolves once the page has painted, and then painted again.
 const TWO_FRAMES: &str =
     "new Promise(done => requestAnimationFrame(() => requestAnimationFrame(() => done())))";
@@ -47,6 +51,8 @@ const TWO_FRAMES: &str =
 pub(crate) struct Browser {
     devtools: DevTools,
     tab: Option<Tab>,
+    /// The start page is still in the history.
+    start_page: bool,
 }
 
 /// A page target, and the DevTools session attached to it.
@@ -68,6 +74,14 @@ impl ScreenChild {
         };
         let tab = browser.tab().await?;
         let opened = browser.navigate(&tab, &page.url).await?;
+        if std::mem::take(&mut browser.start_page) {
+            // The history holds only pages the agent opened: Back can't
+            // lead to the start page.
+            browser
+                .devtools
+                .call("Page.resetNavigationHistory", json!({}), Some(&tab.session))
+                .await?;
+        }
         self.settled().await?;
         Ok(opened)
     }
@@ -97,7 +111,7 @@ impl ScreenChild {
                 "--no-first-run",
                 "--no-default-browser-check",
                 "--password-store=basic",
-                "about:blank",
+                START_PAGE,
             ])
             .fd_mappings(vec![
                 FdMapping {
@@ -114,6 +128,7 @@ impl ScreenChild {
             Ok(Launched::Window { .. } | Launched::NoWindow { .. }) => Ok(Browser {
                 devtools,
                 tab: None,
+                start_page: true,
             }),
             Ok(Launched::Exited { status, output, .. }) => Err(ScreenError(format!(
                 "the browser {shown} exited ({status}) before it opened a window: {output}"
@@ -171,8 +186,9 @@ impl Browser {
             None => {
                 let created = self
                     .devtools
-                    .call("Target.createTarget", json!({"url": "about:blank"}), None)
+                    .call("Target.createTarget", json!({"url": START_PAGE}), None)
                     .await?;
+                self.start_page = true;
                 string(&created, "targetId")?
             }
         };
