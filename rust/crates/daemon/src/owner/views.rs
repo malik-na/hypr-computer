@@ -2,10 +2,13 @@
 //! once the screen is ready and the agent has said its name, [`LIMIT`] at a
 //! time, and `hypr-computer watch` takes the user to them.
 
+use std::sync::Arc;
+
 use domain::SessionId;
 use domain::control::Reply;
 use domain::lifecycle::SessionState;
 use domain::view::{LIMIT, title};
+use ports::ScreenProcess;
 use tokio::sync::oneshot;
 use tracing::{info, warn};
 
@@ -120,13 +123,14 @@ impl State {
     }
 
     /// `hypr-computer watch`: takes the user to the views, and says whose
-    /// they are.
+    /// they are. A view the desktop lost (it restarted, or the user closed
+    /// the window) opens again first: opening an open view changes nothing.
     pub(super) fn watch(&self, reply: oneshot::Sender<Reply>) {
-        let shown: Vec<String> = self
+        let shown: Vec<(String, Arc<dyn ScreenProcess>)> = self
             .sessions
             .iter()
             .filter(|(_, live)| live.view.shown())
-            .filter_map(|(id, live)| live.name.as_ref().map(|name| title(name, id)))
+            .filter_map(|(id, live)| Some((title(live.name.as_ref()?, id), live.screen.clone()?)))
             .collect();
         if shown.is_empty() {
             let _ = reply.send(Reply::Refused(self.nothing_to_watch()));
@@ -139,10 +143,18 @@ impl State {
             .count();
         let desktop = self.desktop.clone();
         tokio::spawn(async move {
+            if desktop.place_views().await.is_ok() {
+                for (title, screen) in &shown {
+                    if let Err(e) = screen.open_view(title.clone()).await {
+                        warn!("{title}: its live view didn't open again: {e}");
+                    }
+                }
+            }
+            let titles: Vec<String> = shown.into_iter().map(|(title, _)| title).collect();
             let answer = match desktop.show_views().await {
                 Ok(place) => Reply::Done(format!(
                     "Showing {} on {place}.{}",
-                    and_list(&shown),
+                    and_list(&titles),
                     not_shown(waiting)
                 )),
                 Err(e) => Reply::Refused(format!("Can't show the agents' screens: {e}.")),

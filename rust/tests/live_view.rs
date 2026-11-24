@@ -349,9 +349,11 @@ fn hypr_computer_watch_takes_the_user_to_the_views_and_says_whose_they_are() {
         watch.stdout,
         "Showing agent-1 (session 1) and agent-2 (session 2) on workspace 10.\n"
     );
+    // One rule per view as it opened, the rule again as watch reopens any
+    // view the desktop lost, then the switch to workspace 10.
     assert_eq!(
         desktop.hyprland.requests(),
-        [PLACE_VIEWS, PLACE_VIEWS, SHOW_VIEWS]
+        [PLACE_VIEWS, PLACE_VIEWS, PLACE_VIEWS, SHOW_VIEWS]
     );
 }
 
@@ -374,4 +376,30 @@ fn watch_with_no_agent_working_says_so_and_leaves_the_desktop_alone() {
         "No agent is working, so there is nothing to watch.\n"
     );
     assert_eq!(desktop.hyprland.requests(), Vec::<String>::new());
+}
+
+#[test]
+fn watch_reopens_the_views_the_desktop_lost() {
+    let env = Env::new();
+    let mut desktop = Desktop::start(&env);
+    let daemon = Daemon::start_on(&env, &desktop);
+    let _two = agents(&env, 1, 2);
+    desktop.wait_for_views(2);
+
+    desktop.restart();
+    let end = Instant::now() + TIMEOUT;
+    while daemon.log().matches("the live view closed").count() < 2 {
+        assert!(Instant::now() < end, "{}", daemon.log());
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(desktop.views(), []);
+
+    let watch = hypr_computer(&env, &["watch"]);
+    assert!(watch.success, "{}", watch.stderr);
+    let titles: Vec<String> = desktop
+        .wait_for_views(2)
+        .into_iter()
+        .map(|v| v.title)
+        .collect();
+    assert_eq!(titles, ["agent-1 (session 1)", "agent-2 (session 2)"]);
 }
