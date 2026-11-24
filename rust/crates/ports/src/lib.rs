@@ -9,7 +9,7 @@ use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use domain::SessionId;
 
@@ -38,10 +38,33 @@ impl fmt::Display for ScreenError {
 
 impl std::error::Error for ScreenError {}
 
+/// A program to start on a screen, and its arguments.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AppCommand {
+    /// A name to look up on `PATH`, or a path.
+    pub program: String,
+    pub args: Vec<String>,
+}
+
+/// What became of an app started on a screen.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Launched {
+    /// It opened a window, and the window is on the screen now.
+    Window { pid: u32 },
+    /// It is running, but opened no window in the time it was given.
+    NoWindow { pid: u32, waited: Duration },
+    /// It ended before it opened a window. `output` is the end of what it
+    /// printed, which usually says why.
+    Exited { status: String, output: String },
+}
+
 /// An agent's screen, as its tools see it.
 pub trait Screen: Send + Sync {
     /// The whole screen, as it is now.
     fn screenshot(&self) -> BoxFuture<'_, Result<Png, ScreenError>>;
+    /// Starts an app on this screen and on no other, and waits a while for
+    /// its window. The app ends with the screen, and so does all it starts.
+    fn launch(&self, app: AppCommand) -> BoxFuture<'_, Result<Launched, ScreenError>>;
 }
 
 /// An agent's screen, as the daemon runs it: the steps of

@@ -7,10 +7,11 @@ use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 use std::time::Duration;
 
 use domain::SessionId;
-use ports::{BoxFuture, Png, Screen, ScreenError, ScreenProcess, Screens};
+use ports::{AppCommand, BoxFuture, Launched, Png, Screen, ScreenError, ScreenProcess, Screens};
 use rustix::process::{Pid, Signal, kill_process_group, test_kill_process_group};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{ChildStdin, ChildStdout, Command};
@@ -19,7 +20,7 @@ use tokio::time::timeout;
 use tracing::warn;
 
 use crate::SIZE;
-use crate::protocol::{READY, Reply, Request};
+use crate::protocol::{READY, Reply, Request, Status};
 
 /// How long a screen may take to say it is up.
 const START_TIME: Duration = Duration::from_secs(10);
@@ -83,6 +84,7 @@ impl Screens for ScreenProcesses {
             pid,
             group,
             dir,
+            launched: AtomicU64::new(0),
             pipe: Mutex::new(Some(Pipe {
                 stdin,
                 stdout: BufReader::new(stdout),
@@ -102,10 +104,14 @@ fn fresh_private_dir(dir: &Path) -> io::Result<()> {
     fs::DirBuilder::new().mode(0o700).create(dir)
 }
 
-struct ScreenChild {
+pub(crate) struct ScreenChild {
     pid: u32,
-    group: Pid,
-    dir: PathBuf,
+    /// The screen's process group, which every app on it joins.
+    pub(crate) group: Pid,
+    /// The screen's own directory: its socket, and its apps' output.
+    pub(crate) dir: PathBuf,
+    /// How many apps have been started on it.
+    pub(crate) launched: AtomicU64,
     /// `None` once the screen broke the protocol or stopped answering: the
     /// pipe may be out of step, so nothing more is asked of it.
     pipe: Mutex<Option<Pipe>>,
@@ -115,6 +121,17 @@ struct ScreenChild {
 struct Pipe {
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
+}
+
+/// What the screen answered.
+enum Answer {
+    Png(Vec<u8>),
+    Status(Status),
+}
+
+/// The screen answered, but not what was asked; `Pipe::ask` rules it out.
+fn mismatch() -> ScreenError {
+    ScreenError("the screen's answer doesn't fit the question".to_owned())
 }
 
 impl Pipe {
@@ -127,9 +144,9 @@ impl Pipe {
         }
     }
 
-    /// Sends `request`; `Err` if the pipe broke, `Ok(Err)` if the screen
-    /// answered with an error.
-    async fn ask(&mut self, request: Request) -> Result<Result<Vec<u8>, String>, ScreenError> {
+    /// Sends `request`; `Err` if the pipe broke or the answer doesn't fit
+    /// the request, `Ok(Err)` if the screen answered with an error.
+    async fn ask(&mut self, request: &Request) -> Result<Result<Answer, String>, ScreenError> {
         let wrote = async {
             self.stdin.write_all(request.line().as_bytes()).await?;
             self.stdin.flush().await
@@ -138,27 +155,59 @@ impl Pipe {
             .await
             .map_err(|e| ScreenError(format!("can't write to the screen: {e}")))?;
         let line = self.read_line().await?;
-        match Reply::parse(&line) {
-            Some(Reply::Png(len)) if len <= MAX_REPLY => {
+        match (request, Reply::parse(&line)) {
+            (Request::Screenshot, Some(Reply::Png(len))) if len <= MAX_REPLY => {
                 let mut bytes = vec![0; len];
                 self.stdout
                     .read_exact(&mut bytes)
                     .await
                     .map_err(|e| ScreenError(format!("can't read from the screen: {e}")))?;
-                Ok(Ok(bytes))
+                Ok(Ok(Answer::Png(bytes)))
             }
-            Some(Reply::Error(why)) => Ok(Err(why)),
+            (Request::Status, Some(Reply::Status(status))) => Ok(Ok(Answer::Status(status))),
+            (_, Some(Reply::Error(why))) => Ok(Err(why)),
             _ => Err(ScreenError(format!(
-                "the screen answered {:?}",
-                line.trim_end()
+                "the screen answered {:?} to {:?}",
+                line.trim_end(),
+                request.line().trim_end()
             ))),
         }
     }
 }
 
 impl ScreenChild {
-    async fn ask(&self, request: Request) -> Result<Vec<u8>, ScreenError> {
-        let mut pipe = self.pipe.lock().await;
+    /// The Wayland socket apps connect to.
+    pub(crate) fn socket(&self) -> PathBuf {
+        self.dir.join(SOCKET)
+    }
+
+    pub(crate) async fn status(&self) -> Result<Status, ScreenError> {
+        self.status_on(&mut *self.pipe.lock().await).await
+    }
+
+    /// The status, with the pipe already locked.
+    async fn status_on(&self, pipe: &mut Option<Pipe>) -> Result<Status, ScreenError> {
+        match self.ask_on(pipe, &Request::Status).await? {
+            Answer::Status(status) => Ok(status),
+            _ => Err(mismatch()),
+        }
+    }
+
+    async fn png(&self) -> Result<Vec<u8>, ScreenError> {
+        match self
+            .ask_on(&mut *self.pipe.lock().await, &Request::Screenshot)
+            .await?
+        {
+            Answer::Png(png) => Ok(png),
+            _ => Err(mismatch()),
+        }
+    }
+
+    async fn ask_on(
+        &self,
+        pipe: &mut Option<Pipe>,
+        request: &Request,
+    ) -> Result<Answer, ScreenError> {
         let Some(open) = pipe.as_mut() else {
             return Err(ScreenError("the screen stopped answering".to_owned()));
         };
@@ -170,7 +219,7 @@ impl ScreenChild {
                 ANSWER_TIME.as_secs()
             )),
         };
-        self.give_up(&mut pipe, &broke);
+        self.give_up(pipe, &broke);
         Err(broke)
     }
 
@@ -201,7 +250,11 @@ impl ScreenChild {
 
 impl Screen for ScreenChild {
     fn screenshot(&self) -> BoxFuture<'_, Result<Png, ScreenError>> {
-        Box::pin(async move { self.ask(Request::Screenshot).await.map(Png) })
+        Box::pin(async move { self.png().await.map(Png) })
+    }
+
+    fn launch(&self, app: AppCommand) -> BoxFuture<'_, Result<Launched, ScreenError>> {
+        Box::pin(self.start_app(app))
     }
 }
 
@@ -235,7 +288,7 @@ impl ScreenProcess for ScreenChild {
 
     fn verify(&self) -> BoxFuture<'_, Result<(), ScreenError>> {
         Box::pin(async move {
-            let shot = self.ask(Request::Screenshot).await?;
+            let shot = self.png().await?;
             match png_size(&shot) {
                 Some(size) if size == SIZE => Ok(()),
                 Some((w, h)) => Err(ScreenError(format!(
