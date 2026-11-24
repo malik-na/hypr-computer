@@ -125,6 +125,11 @@ path = "view_lifecycle.rs"
 name = "view_watch_command"
 path = "view_watch_command.rs"
 
+# #28, written from the spec by an independent test agent; helpers in spec28/.
+[[test]]
+name = "stop_all_spec"
+path = "stop_all_spec.rs"
+
 # The tiny Wayland app the tests put on a screen (see support/app.rs).
 [[bin]]
 name = "hc-test-app"
