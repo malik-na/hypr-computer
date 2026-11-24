@@ -24,6 +24,7 @@ use smithay::wayland::shell::xdg::XdgShellState;
 use smithay::wayland::shell::xdg::decoration::XdgDecorationState;
 use smithay::wayland::shm::ShmState;
 use smithay::wayland::viewporter::ViewporterState;
+use smithay::wayland::xdg_activation::XdgActivationState;
 
 use crate::keymap::Keymap;
 use crate::reading::Reading;
@@ -48,7 +49,8 @@ pub struct State {
 
     pub space: Space<Window>,
     pub output: Output,
-    /// Every app window, oldest first. Only `shown` is on the screen.
+    /// Every app window, oldest first; one an app brought back to the front
+    /// counts as new. Only `shown` is on the screen.
     pub windows: Vec<Window>,
     pub shown: Option<Window>,
     pub popups: PopupManager,
@@ -75,6 +77,7 @@ pub struct State {
     pub seat_state: SeatState<State>,
     pub data_device_state: DataDeviceState,
     pub seat: Seat<State>,
+    pub xdg_activation_state: XdgActivationState,
     /// The keyboard's keymap, to look keys up in.
     pub keymap: Keymap,
     _output_manager_state: OutputManagerState,
@@ -126,6 +129,7 @@ impl State {
             seat_state,
             data_device_state: DataDeviceState::new::<State>(&display),
             seat,
+            xdg_activation_state: XdgActivationState::new::<State>(&display),
             _output_manager_state: OutputManagerState::new_with_xdg_output::<State>(&display),
             _xdg_decoration_state: XdgDecorationState::new::<State>(&display),
             _viewporter_state: ViewporterState::new::<State>(&display),

@@ -147,6 +147,10 @@ path = "browser_lockdown_spec.rs"
 name = "page_popups_spec"
 path = "page_popups_spec.rs"
 
+[[test]]
+name = "browser_windows_spec"
+path = "browser_windows_spec.rs"
+
 # The tiny Wayland app the tests put on a screen (see support/app.rs).
 [[bin]]
 name = "hc-test-app"

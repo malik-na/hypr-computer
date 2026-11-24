@@ -9,6 +9,7 @@
 //! daemon asks. It exits when its stdin closes.
 #![forbid(unsafe_code)]
 
+mod activation;
 mod capture;
 mod clipboard;
 mod handlers;

@@ -1,6 +1,7 @@
 //! The window policy: one app on the screen at a time, at the screen's full
 //! size, with no decorations. A new window is shown at once; when the shown
-//! one closes, the newest of the others comes back.
+//! one closes, the newest of the others comes back. An app may bring one of
+//! its windows back to the front (`activation.rs`).
 
 use serde_json::json;
 use smithay::backend::renderer::utils::with_renderer_surface_state;
@@ -92,7 +93,8 @@ impl State {
             .find(|w| w.toplevel().is_some_and(|t| t.wl_surface() == surface))
     }
 
-    fn show(&mut self, window: Window) {
+    /// Puts `window` on the screen, in place of the one there.
+    pub fn show(&mut self, window: Window) {
         if let Some(old) = self.shown.take()
             && old != window
         {
