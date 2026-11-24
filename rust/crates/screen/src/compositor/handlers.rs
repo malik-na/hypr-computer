@@ -53,6 +53,15 @@ impl CompositorHandler for State {
             if let Some(window) = self.window_for(&root) {
                 window.on_commit();
             }
+            if self
+                .shown
+                .as_ref()
+                .and_then(|w| w.toplevel())
+                .map(|t| t.wl_surface())
+                == Some(&root)
+            {
+                self.focus_shown();
+            }
         }
         if let Some(toplevel) = self.window_for(surface).and_then(|w| w.toplevel())
             && !toplevel.is_initial_configure_sent()
