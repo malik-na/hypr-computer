@@ -40,8 +40,9 @@ impl State {
         self.space.unmap_elem(&window);
         if self.shown.as_ref() == Some(&window) {
             self.shown = None;
-            if let Some(next) = self.windows.last().cloned() {
-                self.show(next);
+            match self.windows.last().cloned() {
+                Some(next) => self.show(next),
+                None => self.focus_shown(),
             }
         }
         self.dirty = true;
@@ -64,6 +65,7 @@ impl State {
         self.space.map_element(window.clone(), (0, 0), true);
         set_activated(&window, true);
         self.shown = Some(window);
+        self.focus_shown();
         self.dirty = true;
     }
 }

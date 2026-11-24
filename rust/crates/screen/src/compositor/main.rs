@@ -3,13 +3,15 @@
 //! A headless Wayland compositor built on Smithay, rendering in software. The
 //! agent's apps connect to the Wayland socket given as the only argument; the
 //! daemon reads the screen over stdin and stdout (see `screen::protocol`).
-//! There is no window on the host and no input device. It exits when its
-//! stdin closes.
+//! There is no window on the host and no input device, so nothing of the
+//! user's reaches it. It exits when its stdin closes.
 #![forbid(unsafe_code)]
 
 mod capture;
+mod clipboard;
 mod handlers;
 mod requests;
+mod seat;
 mod state;
 mod windows;
 

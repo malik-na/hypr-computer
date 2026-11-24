@@ -37,7 +37,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace       # unit tests, black-box tests of the real binaries, structure checks
 ```
 
-CI runs all three on x86-64 and ARM64. They need Linux, with pixman and libxkbcommon for the agent's screen (Debian and Ubuntu: `libpixman-1-dev libxkbcommon-dev`; Arch: `pixman libxkbcommon`).
+CI runs all three on x86-64 and ARM64. They need Linux, with pixman, libxkbcommon and xkeyboard-config for the agent's screen, and foot, a real app the tests run on it (Debian and Ubuntu: `libpixman-1-dev libxkbcommon-dev xkb-data foot fonts-dejavu-core`; Arch: `pixman libxkbcommon xkeyboard-config foot ttf-dejavu`).
 
 - **Adding a tool** is one file, one registry line and its test: write `rust/crates/tools/src/<name>.rs`, add `mod <name>;` to `rust/crates/tools/src/lib.rs` and `&<name>::<Tool>,` to `TOOLS` in `rust/crates/tools/src/registry.rs`. Tools are called only through `Registry::call`, the one guard; checks every call needs go there, not in the tool.
 - **`domain` stays pure:** no I/O, no async, no clock reads, no other workspace crate. Code that needs the outside world goes in `adapters`, behind a trait in `ports`.

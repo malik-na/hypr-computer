@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 
 mod log;
+mod seat;
 mod window;
 
 use std::env;
@@ -17,6 +18,7 @@ use std::process::{self, ExitCode};
 
 use serde_json::{Value, json};
 use wayland_client::globals::registry_queue_init;
+use wayland_client::protocol::wl_seat;
 use wayland_client::{Connection, QueueHandle};
 
 use crate::log::Log;
@@ -30,6 +32,8 @@ pub struct App {
     pub colours: ([u8; 3], [u8; 3]),
     /// Something changed what the window should show.
     pub dirty: bool,
+    /// What the screen's seat offers.
+    pub seat: Vec<&'static str>,
 }
 
 impl App {
@@ -76,7 +80,10 @@ fn run() -> Result<(), Box<dyn Error>> {
         window: Window::new(&globals, &qh)?,
         colours: (args.top, args.bottom),
         dirty: true,
+        seat: Vec::new(),
     };
+    // Optional: with no seat, the app just shows its colours.
+    let _seat = globals.bind::<wl_seat::WlSeat, _, _>(&qh, 5..=9, ()).ok();
     while !app.window.configured() {
         queue.blocking_dispatch(&mut app)?;
     }
@@ -86,6 +93,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     app.note(&json!({
         "event": "ready",
         "pid": process::id(),
+        "seat": app.seat,
     }));
     loop {
         queue.blocking_dispatch(&mut app)?;
