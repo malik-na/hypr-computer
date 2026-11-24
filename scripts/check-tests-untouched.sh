@@ -8,11 +8,12 @@ HEAD_REF=${HEAD:-HEAD}
 REMOTE=${REMOTE:-origin}
 BODY=${PR_BODY:-}
 
-# Test files: tests/, rust/tests/, rust/crates/*/tests/, *.proptest-regressions.
-# The tests of this check (tests/test_check_tests_untouched.sh) are CI tooling, not product tests.
+# Protected files: the tests (tests/, rust/tests/, rust/crates/*/tests/, *.proptest-regressions) and this
+# check itself (its script and workflow), so an implementation PR can't switch it off. The check's own self-test
+# (tests/test_check_tests_untouched.sh) is protected like any test.
 is_test() {
-  [ "$1" = tests/test_check_tests_untouched.sh ] && return 1
-  [[ $1 =~ ^(tests/|rust/tests/|rust/crates/[^/]+/tests/) || $1 =~ \.proptest-regressions$ ]]
+  [[ $1 =~ ^(tests/|rust/tests/|rust/crates/[^/]+/tests/) || $1 =~ \.proptest-regressions$ ]] && return 0
+  [ "$1" = scripts/check-tests-untouched.sh ] || [ "$1" = .github/workflows/tests-untouched.yml ]
 }
 fail=0
 

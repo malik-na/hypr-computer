@@ -1,6 +1,8 @@
 name: tests-untouched
+# pull_request_target runs this workflow and the check script as they are on the base branch, so a PR can't
+# edit them to let itself through. It never runs code from the PR: it only reads the PR's commits with git.
 on:
-  pull_request:
+  pull_request_target:
 permissions:
   contents: read
 jobs:
@@ -10,9 +12,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.sha }}
-      - name: Self-tests of the check
-        run: tests/test_check_tests_untouched.sh
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+      - name: Fetch the PR's commits (data only, never run)
+        env:
+          PR: ${{ github.event.pull_request.number }}
+        run: git fetch --no-tags origin "+refs/pull/${PR}/head:refs/remotes/pr/head" "+refs/heads/tests/*:refs/remotes/origin/tests/*"
       - name: Implementation PRs do not touch tests
         env:
           BASE: ${{ github.event.pull_request.base.sha }}

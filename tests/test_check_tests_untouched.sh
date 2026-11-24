@@ -58,4 +58,7 @@ run "Tests-From stale (not current head) fails" 1 "Tests-From: $TESTS" "not the 
 setup; impl; printf '#[test]\nfn sneaky(){}\n' >>rust/crates/a/src/lib.rs; commit
 run "#[test] added in src fails" 1 "Tests-From: $TESTS" "rust/crates/a/src/lib.rs"
 
+setup; impl; echo 'fn b(){}' >>rust/crates/a/src/lib.rs; mkdir -p scripts; echo 'exit 0' >scripts/check-tests-untouched.sh; commit
+run "editing the check itself fails" 1 "Tests-From: $TESTS" "scripts/check-tests-untouched.sh"
+
 echo; echo "$pass passed, $failn failed"; [ $failn = 0 ]
