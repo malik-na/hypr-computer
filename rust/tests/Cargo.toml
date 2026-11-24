@@ -168,6 +168,11 @@ path = "clipboard_spec.rs"
 name = "takeover_agents_spec"
 path = "takeover_agents_spec.rs"
 
+# #29, written from the spec by an independent test agent; helpers in spec29/.
+[[test]]
+name = "notice_shown_spec"
+path = "notice_shown_spec.rs"
+
 # The tiny Wayland app the tests put on a screen (see support/app.rs).
 [[bin]]
 name = "hc-test-app"
@@ -184,6 +189,7 @@ xkbcommon = "0.8.0"
 adapters.workspace = true
 base64 = "0.22.1"
 command-fds = "0.3.3"
+futures-util = "0.3.31"
 png = "0.17.16"
 ports.workspace = true
 tokio.workspace = true
@@ -193,6 +199,8 @@ toml = "0.9"
 wayland-client = "0.31.15"
 wayland-protocols = { version = "0.32.13", features = ["client", "unstable"] }
 xkbcommon = { version = "0.8.0", default-features = false }
+# The fake notification service the notice's tests run (see spec29/notifications.rs).
+zbus = "6.5.0"
 
 [lints]
 workspace = true
