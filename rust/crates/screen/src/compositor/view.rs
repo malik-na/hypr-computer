@@ -5,9 +5,10 @@
 //! Watch-only by construction: the view never binds `wl_seat`, so the user's
 //! pointer and keys have no way to reach the agent's apps.
 //!
-//! The screen is drawn only when the desktop asks for a frame (so not while
-//! the window is hidden) and it has changed since the frame the view last
-//! showed.
+//! The window is black, at whatever size the desktop gives it, with the
+//! screen in a subsurface scaled to fit, its shape kept. The screen is drawn
+//! only when the desktop asks for a frame (so not while the window is
+//! hidden) and it has changed since the frame the view last showed.
 
 use std::fs::File;
 use std::io;
@@ -26,17 +27,19 @@ use smithay::reexports::calloop::{Interest, Mode, PostAction};
 use wayland_client::backend::WaylandError;
 use wayland_client::globals::{GlobalListContents, registry_queue_init};
 use wayland_client::protocol::{
-    wl_buffer, wl_callback, wl_compositor, wl_registry, wl_shm, wl_shm_pool, wl_surface,
+    wl_buffer, wl_callback, wl_compositor, wl_registry, wl_shm, wl_shm_pool, wl_subcompositor,
+    wl_subsurface, wl_surface,
 };
 use wayland_client::{Connection, Dispatch, QueueHandle, delegate_noop};
+use wayland_protocols::wp::viewporter::client::{wp_viewport, wp_viewporter};
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 
 use crate::state::{HEIGHT, State, WIDTH};
 
 /// One frame's bytes: the whole screen, four bytes a pixel.
 const FRAME_BYTES: usize = WIDTH as usize * HEIGHT as usize * 4;
-/// The shared memory: two frames.
-const MEMORY_BYTES: usize = 2 * FRAME_BYTES;
+/// The shared memory: two frames, then one black pixel.
+const MEMORY_BYTES: usize = 2 * FRAME_BYTES + 4;
 
 /// How long the desktop may take to answer as the view opens. The screen
 /// serves nothing else meanwhile, and the daemon ends a session whose screen
@@ -49,18 +52,32 @@ pub struct View {
     id: u64,
     connection: Connection,
     qh: QueueHandle<State>,
-    surface: wl_surface::WlSurface,
+    /// The window itself: one black pixel, stretched to its size.
+    window: Scaled,
+    /// The screen, inside the window.
+    picture: Scaled,
+    placement: wl_subsurface::WlSubsurface,
     _toplevel: xdg_toplevel::XdgToplevel,
-    /// Two frames' worth of shared memory, so one can be drawn while the
-    /// desktop still reads the other.
+    /// The window's size, as the desktop last asked; 0 for "any".
+    size: (i32, i32),
+    /// Two frames and a black pixel's worth of shared memory, so a frame can
+    /// be drawn while the desktop still reads the other.
     memory: File,
     buffers: [wl_buffer::WlBuffer; 2],
+    black: wl_buffer::WlBuffer,
     /// Which buffers the desktop still holds.
     busy: [bool; 2],
     /// The desktop asked for a frame and hasn't had one since.
     wanted: bool,
-    /// The screen's `frame` the view last showed.
+    /// The screen's `frame` the view last showed, and the buffer it is in.
     shown: Option<u64>,
+    last: Option<usize>,
+}
+
+/// A surface whose picture is scaled to the size it is given.
+struct Scaled {
+    surface: wl_surface::WlSurface,
+    viewport: wp_viewport::WpViewport,
 }
 
 impl State {
@@ -84,16 +101,30 @@ impl State {
         let qh = queue.handle();
         let compositor: wl_compositor::WlCompositor =
             globals.bind(&qh, 4..=6, ()).map_err(|e| failed(&e))?;
+        let subcompositor: wl_subcompositor::WlSubcompositor =
+            globals.bind(&qh, 1..=1, ()).map_err(|e| failed(&e))?;
+        let viewporter: wp_viewporter::WpViewporter =
+            globals.bind(&qh, 1..=1, ()).map_err(|e| failed(&e))?;
         let shm: wl_shm::WlShm = globals.bind(&qh, 1..=1, ()).map_err(|e| failed(&e))?;
         let wm: xdg_wm_base::XdgWmBase = globals.bind(&qh, 1..=6, ()).map_err(|e| failed(&e))?;
 
         let memory = File::from(
             memfd_create("hypr-computer-view", MemfdFlags::CLOEXEC).map_err(|e| failed(&e))?,
         );
+        // A new memfd is all zeros: the black pixel is already there.
         memory
             .set_len(MEMORY_BYTES as u64)
             .map_err(|e| failed(&e))?;
         let pool = shm.create_pool(memory.as_fd(), MEMORY_BYTES as i32, &qh, ());
+        let black = pool.create_buffer(
+            (2 * FRAME_BYTES) as i32,
+            1,
+            1,
+            4,
+            wl_shm::Format::Xrgb8888,
+            &qh,
+            2,
+        );
         let buffers = [0, 1].map(|i| {
             pool.create_buffer(
                 (i * FRAME_BYTES) as i32,
@@ -107,11 +138,21 @@ impl State {
         });
         pool.destroy();
 
-        let surface = compositor.create_surface(&qh, ());
-        let toplevel = wm.get_xdg_surface(&surface, &qh, ()).get_toplevel(&qh, ());
+        let scaled = || {
+            let surface = compositor.create_surface(&qh, ());
+            let viewport = viewporter.get_viewport(&surface, &qh, ());
+            Scaled { surface, viewport }
+        };
+        let (window, picture) = (scaled(), scaled());
+        let placement = subcompositor.get_subsurface(&picture.surface, &window.surface, &qh, ());
+        // Frames go up as they are drawn, not with the window's own commits.
+        placement.set_desync();
+        let toplevel = wm
+            .get_xdg_surface(&window.surface, &qh, ())
+            .get_toplevel(&qh, ());
         toplevel.set_title(title.to_owned());
         toplevel.set_app_id(APP_ID.to_owned());
-        surface.commit();
+        window.surface.commit();
 
         let fd = connection
             .backend()
@@ -150,13 +191,18 @@ impl State {
             id,
             connection,
             qh,
-            surface,
+            window,
+            picture,
+            placement,
             _toplevel: toplevel,
+            size: (0, 0),
             memory,
             buffers,
+            black,
             busy: [false; 2],
             wanted: false,
             shown: None,
+            last: None,
         });
         self.flush_view();
         Ok(())
@@ -198,10 +244,12 @@ impl State {
         view.busy[free] = true;
         view.wanted = false;
         view.shown = Some(frame);
-        view.surface.attach(Some(&view.buffers[free]), 0, 0);
-        view.surface.damage_buffer(0, 0, WIDTH, HEIGHT);
-        view.surface.frame(&view.qh, ());
-        view.surface.commit();
+        view.last = Some(free);
+        let picture = &view.picture.surface;
+        picture.attach(Some(&view.buffers[free]), 0, 0);
+        picture.damage_buffer(0, 0, WIDTH, HEIGHT);
+        picture.frame(&view.qh, ());
+        picture.commit();
     }
 
     /// Sends the desktop what the view asked of it. What doesn't fit in the
@@ -260,6 +308,49 @@ impl Dispatch<xdg_wm_base::XdgWmBase, ()> for State {
     }
 }
 
+impl View {
+    /// Lays the window out at the size the desktop asked for: black, with
+    /// the screen as large as fits in the middle.
+    fn lay_out(&mut self) {
+        let (width, height) = match self.size {
+            (w, h) if w > 0 && h > 0 => (w, h),
+            _ => (WIDTH, HEIGHT),
+        };
+        let ((x, y), (fit_width, fit_height)) = fit(width, height);
+        self.picture.viewport.set_destination(fit_width, fit_height);
+        // Hyprland (0.57.2) applies a new viewport size only with a buffer,
+        // so the frame on show goes up again with it.
+        if let Some(last) = self.last
+            && let (Some(buffer), Some(busy)) = (self.buffers.get(last), self.busy.get_mut(last))
+        {
+            *busy = true;
+            self.picture.surface.attach(Some(buffer), 0, 0);
+            self.picture.surface.damage_buffer(0, 0, WIDTH, HEIGHT);
+        }
+        self.picture.surface.commit();
+        self.placement.set_position(x, y);
+        self.window.viewport.set_destination(width, height);
+        self.window.surface.attach(Some(&self.black), 0, 0);
+        self.window.surface.damage_buffer(0, 0, 1, 1);
+        self.window.surface.commit();
+    }
+}
+
+/// Where the screen goes in a window `width` by `height`: as large as fits,
+/// its shape kept, in the middle. Its offset, then its size.
+fn fit(width: i32, height: i32) -> ((i32, i32), (i32, i32)) {
+    let scale = f64::min(
+        f64::from(width) / f64::from(WIDTH),
+        f64::from(height) / f64::from(HEIGHT),
+    );
+    let fit_width = ((f64::from(WIDTH) * scale).round() as i32).clamp(1, width);
+    let fit_height = ((f64::from(HEIGHT) * scale).round() as i32).clamp(1, height);
+    (
+        ((width - fit_width) / 2, (height - fit_height) / 2),
+        (fit_width, fit_height),
+    )
+}
+
 impl Dispatch<xdg_surface::XdgSurface, ()> for State {
     fn event(
         state: &mut Self,
@@ -269,12 +360,15 @@ impl Dispatch<xdg_surface::XdgSurface, ()> for State {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        if let xdg_surface::Event::Configure { serial } = event {
-            xdg.ack_configure(serial);
-            // The first frame maps the window.
-            if state.view.as_ref().is_some_and(|v| v.shown.is_none()) {
-                state.view_wanted();
-            }
+        let xdg_surface::Event::Configure { serial } = event else {
+            return;
+        };
+        let Some(view) = &mut state.view else { return };
+        xdg.ack_configure(serial);
+        view.lay_out();
+        // The first frame comes with the first layout.
+        if view.shown.is_none() {
+            state.view_wanted();
         }
     }
 }
@@ -288,9 +382,15 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for State {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        // The user closed it; `hypr-computer watch` opens it again.
-        if let xdg_toplevel::Event::Close = event {
-            state.close_view("the user closed it");
+        match event {
+            xdg_toplevel::Event::Configure { width, height, .. } => {
+                if let Some(view) = &mut state.view {
+                    view.size = (width, height);
+                }
+            }
+            // The user closed it; `hypr-computer watch` opens it again.
+            xdg_toplevel::Event::Close => state.close_view("the user closed it"),
+            _ => {}
         }
     }
 }
@@ -319,6 +419,7 @@ impl Dispatch<wl_buffer::WlBuffer, usize> for State {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
+        // Index 2 is the black pixel, which is never redrawn.
         if let wl_buffer::Event::Release = event
             && let Some(busy) = state.view.as_mut().and_then(|v| v.busy.get_mut(*index))
         {
@@ -329,6 +430,10 @@ impl Dispatch<wl_buffer::WlBuffer, usize> for State {
 }
 
 delegate_noop!(State: wl_compositor::WlCompositor);
+delegate_noop!(State: wl_subcompositor::WlSubcompositor);
+delegate_noop!(State: wl_subsurface::WlSubsurface);
+delegate_noop!(State: wp_viewporter::WpViewporter);
+delegate_noop!(State: wp_viewport::WpViewport);
 delegate_noop!(State: ignore wl_surface::WlSurface);
 delegate_noop!(State: ignore wl_shm::WlShm);
 delegate_noop!(State: wl_shm_pool::WlShmPool);

@@ -21,6 +21,8 @@ mod views;
 
 enum Msg {
     Connect(CancellationToken, oneshot::Sender<SessionId>),
+    /// The agent made its first request.
+    Introduce(SessionId, String),
     Disconnect(SessionId, EndReason),
     ToolCall(SessionId, oneshot::Sender<Admission>),
     Screen(SessionId, News),
@@ -49,6 +51,9 @@ struct Live {
     screen: Option<Arc<dyn ScreenProcess>>,
     /// Why the session is being torn down; set when the teardown starts.
     ending: Option<EndReason>,
+    /// The agent's name, once it has made its first request ("" if it gave
+    /// none then).
+    name: Option<String>,
     view: views::View,
 }
 
@@ -133,6 +138,14 @@ pub struct Gate {
     tx: mpsc::UnboundedSender<Msg>,
 }
 
+impl Gate {
+    /// The agent made its first request, saying its name, or "" if it gave
+    /// none.
+    pub fn introduce(&self, name: String) {
+        let _ = self.tx.send(Msg::Introduce(self.id, name));
+    }
+}
+
 impl Admit for Gate {
     fn admit(&self) -> BoxFuture<'_, Admission> {
         Box::pin(async move {
@@ -160,6 +173,7 @@ async fn run(mut rx: mpsc::UnboundedReceiver<Msg>, mut state: State) {
     while let Some(msg) = rx.recv().await {
         match msg {
             Msg::Connect(connection, reply) => state.connect(connection, reply),
+            Msg::Introduce(id, name) => state.introduce(id, name),
             Msg::Disconnect(id, reason) => state.event(id, Event::Disconnect, Some(reason)),
             Msg::ToolCall(id, reply) => {
                 let _ = reply.send(state.tool_call(id));
@@ -179,6 +193,7 @@ impl State {
             connection,
             screen: None,
             ending: None,
+            name: None,
             view: views::View::default(),
         };
         let (id, effect) = self.sessions.connect(self.clock.now(), live);

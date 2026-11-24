@@ -1,7 +1,7 @@
 //! The Wayland protocols the screen speaks, as Smithay handlers: surfaces and
 //! shared-memory buffers, xdg-shell windows and popups, server-side
-//! decorations (that is, none drawn), and the output. The seat is in
-//! `seat.rs`.
+//! decorations (that is, none drawn), viewports, and the output. The seat is
+//! in `seat.rs`.
 
 use std::sync::LazyLock;
 use std::time::Instant;
@@ -23,8 +23,8 @@ use smithay::wayland::shell::xdg::{
 };
 use smithay::wayland::shm::{ShmHandler, ShmState};
 use smithay::{
-    delegate_compositor, delegate_output, delegate_shm, delegate_xdg_decoration,
-    delegate_xdg_shell,
+    delegate_compositor, delegate_output, delegate_shm, delegate_viewporter,
+    delegate_xdg_decoration, delegate_xdg_shell,
 };
 
 use crate::state::{ClientState, HEIGHT, State, WIDTH};
@@ -184,3 +184,4 @@ delegate_shm!(State);
 delegate_xdg_shell!(State);
 delegate_xdg_decoration!(State);
 delegate_output!(State);
+delegate_viewporter!(State);

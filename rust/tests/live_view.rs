@@ -43,16 +43,106 @@ fn agent(env: &Env) -> Shim {
     shim
 }
 
+/// Agents `first..=last`, called `agent-<n>`, each with its screen ready.
+fn agents(env: &Env, first: u64, last: u64) -> Vec<Shim> {
+    (first..=last)
+        .map(|n| {
+            let mut shim = Shim::start(env);
+            shim.initialize_as(&format!("agent-{n}"));
+            shim.screenshot();
+            shim
+        })
+        .collect()
+}
+
 #[test]
-fn an_agents_screen_opens_on_the_desktop_as_a_window_of_its_own() {
+fn an_agents_screen_opens_on_the_desktop_as_a_window_named_after_the_agent() {
     let env = Env::new();
     let mut desktop = Desktop::start(&env);
     let _daemon = Daemon::start_on(&env, &desktop);
-    let _agent = agent(&env);
+    let mut shim = Shim::start(&env);
+    shim.initialize_as("claude-code");
 
     let views = desktop.wait_for_views(1);
     assert_eq!(views[0].app_id, VIEW_APP_ID);
-    assert_eq!(views[0].title, "hypr-computer: session 1");
+    assert_eq!(views[0].title, "claude-code (session 1)");
+}
+
+#[test]
+fn the_view_waits_for_the_agent_to_say_its_name() {
+    let env = Env::new();
+    let mut desktop = Desktop::start(&env);
+    let daemon = Daemon::start_on(&env, &desktop);
+    let mut shim = Shim::start(&env);
+    daemon.wait_for_log("session 1: screen ready");
+    thread::sleep(Duration::from_millis(300));
+    assert_eq!(desktop.views(), []);
+
+    shim.initialize_as("codex");
+    assert_eq!(desktop.wait_for_views(1)[0].title, "codex (session 1)");
+}
+
+/// The `_meta` a client on MCP 2026-07-28 sends with every request, in place
+/// of an `initialize` handshake; with its name if `name` is given.
+fn inline_meta(name: Option<&str>) -> serde_json::Value {
+    let mut meta = serde_json::json!({
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {},
+    });
+    if let Some(name) = name {
+        meta["io.modelcontextprotocol/clientInfo"] =
+            serde_json::json!({"name": name, "version": "2"});
+    }
+    serde_json::json!({ "_meta": meta })
+}
+
+#[test]
+fn an_agent_without_a_handshake_is_named_from_its_requests() {
+    let env = Env::new();
+    let mut desktop = Desktop::start(&env);
+    let _daemon = Daemon::start_on(&env, &desktop);
+    let mut shim = Shim::start(&env);
+    let tools = shim.request("tools/list", inline_meta(Some("claude-code")));
+    assert!(tools.get("error").is_none(), "{tools}");
+
+    assert_eq!(
+        desktop.wait_for_views(1)[0].title,
+        "claude-code (session 1)"
+    );
+}
+
+#[test]
+fn an_agent_that_gives_no_name_is_shown_as_an_agent() {
+    let env = Env::new();
+    let mut desktop = Desktop::start(&env);
+    let _daemon = Daemon::start_on(&env, &desktop);
+    let mut shim = Shim::start(&env);
+    let tools = shim.request("tools/list", inline_meta(None));
+    assert!(tools.get("error").is_none(), "{tools}");
+
+    assert_eq!(desktop.wait_for_views(1)[0].title, "agent (session 1)");
+}
+
+#[test]
+fn several_agents_views_are_on_the_desktop_at_once_each_showing_its_own_screen() {
+    let env = Env::new();
+    let mut desktop = Desktop::start(&env);
+    let _daemon = Daemon::start_on(&env, &desktop);
+    let mut both = agents(&env, 1, 2);
+    let _on_1 = App::paint(&env, 1, RED, RED);
+    let _on_2 = App::paint(&env, 2, BLUE, BLUE);
+
+    let titles: Vec<String> = desktop
+        .wait_for_views(2)
+        .into_iter()
+        .map(|v| v.title)
+        .collect();
+    assert_eq!(titles, ["agent-1 (session 1)", "agent-2 (session 2)"]);
+    // The fake desktop shows its newest window: agent 2's view.
+    let shot = both[1].screenshot();
+    assert_eq!(shot.pixel(640, 400), BLUE);
+    assert_desktop_shows(&mut desktop, &shot);
+    assert_eq!(both[0].screenshot().pixel(640, 400), RED);
 }
 
 #[test]
@@ -133,14 +223,13 @@ fn the_view_closes_when_its_session_ends() {
     let env = Env::new();
     let mut desktop = Desktop::start(&env);
     let daemon = Daemon::start_on(&env, &desktop);
-    let mut first = agent(&env);
-    let _second = agent(&env);
+    let mut both = agents(&env, 1, 2);
     desktop.wait_for_views(2);
 
-    first.kill();
+    both[0].kill();
     daemon.wait_for_log("session 1 ended");
     let left = desktop.wait_for_views(1);
-    assert_eq!(left[0].title, "hypr-computer: session 2");
+    assert_eq!(left[0].title, "agent-2 (session 2)");
 }
 
 #[test]

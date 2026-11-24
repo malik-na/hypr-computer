@@ -23,6 +23,7 @@ use smithay::wayland::selection::data_device::DataDeviceState;
 use smithay::wayland::shell::xdg::XdgShellState;
 use smithay::wayland::shell::xdg::decoration::XdgDecorationState;
 use smithay::wayland::shm::ShmState;
+use smithay::wayland::viewporter::ViewporterState;
 
 use crate::keymap::Keymap;
 use crate::reading::Reading;
@@ -78,6 +79,7 @@ pub struct State {
     pub keymap: Keymap,
     _output_manager_state: OutputManagerState,
     _xdg_decoration_state: XdgDecorationState,
+    _viewporter_state: ViewporterState,
 }
 
 impl State {
@@ -126,6 +128,7 @@ impl State {
             seat,
             _output_manager_state: OutputManagerState::new_with_xdg_output::<State>(&display),
             _xdg_decoration_state: XdgDecorationState::new::<State>(&display),
+            _viewporter_state: ViewporterState::new::<State>(&display),
             display,
             loop_signal,
             loop_handle,
