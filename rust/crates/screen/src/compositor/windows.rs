@@ -3,10 +3,12 @@
 //! one closes, the newest of the others comes back.
 
 use smithay::backend::renderer::utils::with_renderer_surface_state;
+use serde_json::json;
 use smithay::desktop::Window;
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
-use smithay::wayland::shell::xdg::ToplevelSurface;
+use smithay::wayland::compositor::with_states;
+use smithay::wayland::shell::xdg::{ToplevelSurface, XdgToplevelSurfaceData};
 
 use crate::state::{HEIGHT, State, WIDTH};
 
@@ -60,6 +62,27 @@ impl State {
         {
             self.windows_drawn += 1;
         }
+    }
+
+    /// Every window's app id and title, oldest first, as JSON.
+    pub fn window_list(&self) -> Vec<u8> {
+        let list: Vec<_> = self
+            .windows
+            .iter()
+            .filter_map(Window::toplevel)
+            .map(|toplevel| {
+                let (app_id, title) = with_states(toplevel.wl_surface(), |states| {
+                    states
+                        .data_map
+                        .get::<XdgToplevelSurfaceData>()
+                        .and_then(|data| data.lock().ok())
+                        .map(|data| (data.app_id.clone(), data.title.clone()))
+                        .unwrap_or_default()
+                });
+                json!({"app_id": app_id.unwrap_or_default(), "title": title.unwrap_or_default()})
+            })
+            .collect();
+        serde_json::to_vec(&list).unwrap_or_default()
     }
 
     /// The window whose main surface is `surface`.

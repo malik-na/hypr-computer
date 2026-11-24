@@ -1013,9 +1013,12 @@ dependencies = [
  "png",
  "ports",
  "rustix",
+ "serde_json",
  "smithay",
  "tokio",
  "tracing",
+ "wayland-client",
+ "wayland-protocols",
 ]
 
 [[package]]

@@ -1,11 +1,13 @@
 //! What the daemon and a screen process say to each other.
 //!
-//! The daemon starts the screen with the path of the Wayland socket to make
-//! as its only argument, and pipes for its stdin and stdout:
+//! The daemon starts the screen with the path of the Wayland socket to make,
+//! then, if there is one, the path of the user's desktop's Wayland socket,
+//! where the screen's live view opens; and pipes for its stdin and stdout:
 //!
 //! - The screen writes [`READY`] on a line once apps can connect to it.
 //! - Then the daemon writes one [`Request`] per line, and reads one reply per
-//!   request: a [`Reply`] line, followed for `png <n>` by the image's `n` bytes.
+//!   request: a [`Reply`] line, followed for `png <n>` and `json <n>` by that
+//!   many bytes.
 //! - The screen exits when its stdin closes, so it never outlives the daemon.
 //!
 //! Pipes, not a socket: nothing but the daemon can reach the screen this way,
@@ -32,6 +34,12 @@ pub enum Request {
     /// [`Reply::Done`].
     Press(Point),
     Release(Point),
+    /// The apps' windows, oldest first, as a JSON array of
+    /// `{"app_id": .., "title": ..}`.
+    Windows,
+    /// Open the live view, a window with this title on the user's desktop.
+    /// Answered with [`Reply::Done`]; opening it again changes nothing.
+    View(String),
 }
 
 impl Request {
@@ -53,6 +61,8 @@ impl Request {
             }
             Request::Press(at) => format!("press {} {}\n", at.x, at.y),
             Request::Release(at) => format!("release {} {}\n", at.x, at.y),
+            Request::Windows => "windows\n".to_owned(),
+            Request::View(title) => format!("view {}\n", escape(title)),
         }
     }
 
@@ -99,6 +109,8 @@ impl Request {
                     to: point(x2, y2)?,
                 }))
             }
+            ("windows", "") => Some(Request::Windows),
+            ("view", _) => unescape(rest).map(Request::View),
             _ => None,
         }
     }
@@ -163,6 +175,8 @@ pub enum Reply {
     /// [`Status::commits`] at that moment, to tell when the app has drawn its
     /// response.
     Done(u64),
+    /// JSON of this many bytes follows.
+    Json(usize),
     /// The request failed, and why. Nothing follows.
     Error(String),
 }
@@ -182,6 +196,7 @@ impl Reply {
                 u8::from(*unread)
             ),
             Reply::Done(commits) => format!("done {commits}\n"),
+            Reply::Json(len) => format!("json {len}\n"),
             Reply::Error(why) => format!("error {}\n", why.replace('\n', " ")),
         }
     }
@@ -201,6 +216,7 @@ impl Reply {
                 }))
             }
             "done" => rest.parse().ok().map(Reply::Done),
+            "json" => rest.parse().ok().map(Reply::Json),
             "error" => Some(Reply::Error(rest.to_owned())),
             _ => None,
         }

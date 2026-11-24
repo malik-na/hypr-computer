@@ -10,12 +10,14 @@ use std::sync::Arc;
 
 use domain::lifecycle::{Effect, Event, SessionState};
 use domain::{EndReason, SessionId, Sessions};
-use ports::{BoxFuture, Clock, Screen, ScreenProcess, Screens};
+use ports::{BoxFuture, Clock, Desktop, Screen, ScreenProcess, Screens};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tools::Admit;
 use tracing::info;
+
+mod views;
 
 enum Msg {
     Connect(CancellationToken, oneshot::Sender<SessionId>),
@@ -35,6 +37,8 @@ enum News {
     Failed(String),
     Exited,
     TornDown,
+    /// The live view opened, or why it didn't.
+    View(Result<(), String>),
 }
 
 /// What the owner keeps for each session.
@@ -45,6 +49,7 @@ struct Live {
     screen: Option<Arc<dyn ScreenProcess>>,
     /// Why the session is being torn down; set when the teardown starts.
     ending: Option<EndReason>,
+    view: views::View,
 }
 
 /// A handle to the owner. Cheap to clone.
@@ -56,12 +61,17 @@ pub struct Owner {
 impl Owner {
     /// Starts the owner. It runs until [`Owner::stop`] and then until every
     /// session is gone.
-    pub fn spawn(clock: Arc<dyn Clock>, screens: Arc<dyn Screens>) -> (Owner, JoinHandle<()>) {
+    pub fn spawn(
+        clock: Arc<dyn Clock>,
+        screens: Arc<dyn Screens>,
+        desktop: Arc<dyn Desktop>,
+    ) -> (Owner, JoinHandle<()>) {
         let (tx, rx) = mpsc::unbounded_channel();
         let state = State {
             sessions: Sessions::new(),
             clock,
             screens,
+            desktop,
             tx: tx.clone(),
         };
         (Owner { tx }, tokio::spawn(run(rx, state)))
@@ -140,6 +150,7 @@ struct State {
     sessions: Sessions<Live>,
     clock: Arc<dyn Clock>,
     screens: Arc<dyn Screens>,
+    desktop: Arc<dyn Desktop>,
     /// For the screen tasks to report back on.
     tx: mpsc::UnboundedSender<Msg>,
 }
@@ -168,6 +179,7 @@ impl State {
             connection,
             screen: None,
             ending: None,
+            view: views::View::default(),
         };
         let (id, effect) = self.sessions.connect(self.clock.now(), live);
         info!("{id} started; {} open", self.sessions.open_count());
@@ -203,12 +215,14 @@ impl State {
                     info!("{id}: screen ready");
                 }
                 self.event(id, Event::ScreenReady, None);
+                self.open_view(id);
             }
             News::Failed(why) => {
                 self.event(id, Event::ScreenFailed, Some(EndReason::ScreenFailed(why)))
             }
             News::Exited => self.event(id, Event::ScreenCrashed, Some(EndReason::ScreenExited)),
             News::TornDown => self.event(id, Event::TeardownDone, None),
+            News::View(opened) => self.view_opened(id, opened),
         }
     }
 

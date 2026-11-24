@@ -13,6 +13,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use adapters::SystemClock;
+use domain::paths;
 use listenfd::ListenFd;
 use screen::ScreenProcesses;
 use tracing::{Level, info};
@@ -68,7 +69,8 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let listening = match listen::listen(&mut fds, std::env::var_os("XDG_RUNTIME_DIR").as_deref()) {
+    let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR");
+    let listening = match listen::listen(&mut fds, runtime_dir.as_deref()) {
         Ok(l) => l,
         Err(e) => {
             eprintln!("hypr-computer-daemon: {e}");
@@ -76,9 +78,27 @@ fn main() -> ExitCode {
         }
     };
     info!("{}", listening.describe());
-    let screens = Arc::new(ScreenProcesses::new(program, listening.dir.clone()));
+    let desktop = paths::desktop_socket(
+        std::env::var_os("WAYLAND_DISPLAY").as_deref(),
+        runtime_dir.as_deref(),
+    );
+    let screens = Arc::new(ScreenProcesses::new(
+        program,
+        listening.dir.clone(),
+        desktop.clone(),
+    ));
+    let desktop = adapters::desktop(
+        desktop.as_deref(),
+        std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").as_deref(),
+    );
 
-    match runtime.block_on(serve::run(listening, Arc::new(SystemClock), screens, stop)) {
+    match runtime.block_on(serve::run(
+        listening,
+        Arc::new(SystemClock),
+        screens,
+        stop,
+        desktop,
+    )) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("hypr-computer-daemon: {e}");

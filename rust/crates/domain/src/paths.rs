@@ -1,5 +1,5 @@
-//! Where the daemon listens. The daemon and the shim both use this, so they
-//! can't disagree.
+//! Where the daemon listens, and where the user's desktop is. The daemon and
+//! the shim both use this, so they can't disagree.
 
 use std::ffi::OsStr;
 use std::fmt;
@@ -48,6 +48,21 @@ pub fn daemon_dir(runtime_dir: Option<&OsStr>) -> Result<PathBuf, RuntimeDirErro
 /// The daemon's socket, given the value of `$XDG_RUNTIME_DIR`.
 pub fn daemon_socket(runtime_dir: Option<&OsStr>) -> Result<PathBuf, RuntimeDirError> {
     Ok(daemon_dir(runtime_dir)?.join(SOCKET_NAME))
+}
+
+/// The user's desktop's Wayland socket, given the values of
+/// `$WAYLAND_DISPLAY` and `$XDG_RUNTIME_DIR`, as Wayland apps find it:
+/// `$WAYLAND_DISPLAY` if it is absolute, otherwise inside the runtime dir.
+pub fn desktop_socket(
+    wayland_display: Option<&OsStr>,
+    runtime_dir: Option<&OsStr>,
+) -> Option<PathBuf> {
+    let display = Path::new(wayland_display.filter(|d| !d.is_empty())?);
+    if display.is_absolute() {
+        return Some(display.to_path_buf());
+    }
+    let dir = Path::new(runtime_dir.filter(|d| !d.is_empty())?);
+    dir.is_absolute().then(|| dir.join(display))
 }
 
 #[cfg(test)]

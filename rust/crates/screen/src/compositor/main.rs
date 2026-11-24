@@ -1,11 +1,12 @@
 //! hypr-computer-screen: one agent's screen.
 //!
 //! A headless Wayland compositor built on Smithay, rendering in software. The
-//! agent's apps connect to the Wayland socket given as the only argument; the
-//! daemon reads the screen and drives its pointer and keyboard over stdin and
-//! stdout (see `screen::protocol`). There is no window on the host and no
-//! input device, so nothing of the user's reaches it. It exits when its stdin
-//! closes.
+//! agent's apps connect to the Wayland socket given as the first argument;
+//! the daemon reads the screen and drives its pointer and keyboard over stdin
+//! and stdout (see `screen::protocol`). There is no input device, so nothing
+//! of the user's reaches it. Its only window on the user's desktop, whose
+//! Wayland socket is the second argument, is its live view, opened when the
+//! daemon asks. It exits when its stdin closes.
 #![forbid(unsafe_code)]
 
 mod capture;
@@ -18,6 +19,7 @@ mod reading;
 mod requests;
 mod seat;
 mod state;
+mod view;
 mod windows;
 
 use std::error::Error;
@@ -41,11 +43,14 @@ const FRAME: Duration = Duration::from_millis(16);
 
 fn main() -> ExitCode {
     let mut args = std::env::args_os().skip(1);
-    let (Some(socket), None) = (args.next(), args.next()) else {
-        eprintln!("usage: hypr-computer-screen <path of the Wayland socket to create>");
+    let (Some(socket), desktop, None) = (args.next(), args.next(), args.next()) else {
+        eprintln!(
+            "usage: hypr-computer-screen <path of the Wayland socket to create> \
+             [<path of the user's desktop's Wayland socket>]"
+        );
         return ExitCode::from(2);
     };
-    match run(PathBuf::from(socket)) {
+    match run(PathBuf::from(socket), desktop.map(PathBuf::from)) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("hypr-computer-screen: {e}");
@@ -54,14 +59,19 @@ fn main() -> ExitCode {
     }
 }
 
-fn run(socket: PathBuf) -> Result<(), Box<dyn Error>> {
+fn run(socket: PathBuf, desktop: Option<PathBuf>) -> Result<(), Box<dyn Error>> {
     if !socket.is_absolute() {
         return Err(format!("the socket path must be absolute, not {}", socket.display()).into());
     }
-    let mut event_loop: EventLoop<State> = EventLoop::try_new()?;
+    let mut event_loop: EventLoop<'static, State> = EventLoop::try_new()?;
     let mut display: Display<State> = Display::new()?;
-    let mut state = State::new(display.handle(), event_loop.get_signal())?;
     let handle = event_loop.handle();
+    let mut state = State::new(
+        display.handle(),
+        event_loop.get_signal(),
+        handle.clone(),
+        desktop,
+    )?;
 
     // Apps connecting.
     let listening = ListeningSocket::bind_absolute(socket.clone())
@@ -114,6 +124,7 @@ fn run(socket: PathBuf) -> Result<(), Box<dyn Error>> {
 
     event_loop.run(None, &mut state, |state| {
         let _ = state.display.flush_clients();
+        state.flush_view();
     })?;
     Ok(())
 }

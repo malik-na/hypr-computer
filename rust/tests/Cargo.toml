@@ -88,6 +88,10 @@ path = "shim_exit_spec.rs"
 name = "desktop"
 path = "desktop.rs"
 
+[[test]]
+name = "live_view"
+path = "live_view.rs"
+
 # The tiny Wayland app the tests put on a screen (see support/app.rs).
 [[bin]]
 name = "hc-test-app"
