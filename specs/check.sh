@@ -137,6 +137,8 @@ expect_liveness() {
 expect_pass      SessionLifecycle
 expect_invariant SessionLifecycle HandOffEarly                 ToolCallOnlyOnReadyScreen
 expect_liveness  SessionLifecycle CleanupDependsOnDyingProcess ResourcesEventuallyReleased
+expect_pass      Stop
+expect_invariant Stop             CheckStopOnlyAtStart         NoCallServedWhileStopped
 
 heading "Summary"
 printf '%s' "$summary"
