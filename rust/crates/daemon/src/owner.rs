@@ -22,6 +22,7 @@ use tokio_util::sync::CancellationToken;
 use tools::Admit;
 use tracing::info;
 
+use crate::landing::Landing;
 use crate::limits::LimitsFile;
 
 mod pass;
@@ -256,7 +257,8 @@ impl Admit for Gate {
             self.tx
                 .send(Msg::ToolCall(self.id, reply))
                 .map_err(|_| stopped())?;
-            answer.await.map_err(|_| stopped())?
+            let screen = answer.await.map_err(|_| stopped())??;
+            Ok(Arc::new(Landing::new(screen, self.limits.clone())) as Arc<dyn Screen>)
         })
     }
 

@@ -3,10 +3,12 @@
 #![forbid(unsafe_code)]
 
 mod control;
+mod landing;
 mod limits;
 mod listen;
 mod mcp;
 mod owner;
+mod proxy;
 mod serve;
 
 use std::io::IsTerminal;
@@ -82,6 +84,17 @@ fn main() -> ExitCode {
     };
     info!("{}", listening.describe());
     let limits = Arc::new(LimitsFile::new(listening.dir.join(paths::LIMITS_NAME)));
+    // The proxy every agent's browser goes through: on loopback only.
+    let proxy = match std::net::TcpListener::bind(("127.0.0.1", 0)).and_then(|proxy| {
+        let address = proxy.local_addr()?;
+        Ok((proxy, address))
+    }) {
+        Ok(proxy) => proxy,
+        Err(e) => {
+            eprintln!("hypr-computer-daemon: can't start the proxy on 127.0.0.1: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
     let desktop = paths::desktop_socket(
         std::env::var_os("WAYLAND_DISPLAY").as_deref(),
         runtime_dir.as_deref(),
@@ -93,6 +106,7 @@ fn main() -> ExitCode {
         std::env::var_os("HYPR_COMPUTER_BROWSER")
             .filter(|b| !b.is_empty())
             .map(PathBuf::from),
+        proxy.1,
     ));
     let desktop = adapters::desktop(
         desktop.as_deref(),
@@ -106,6 +120,7 @@ fn main() -> ExitCode {
         stop,
         desktop,
         limits,
+        proxy.0,
     )) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {

@@ -183,6 +183,15 @@ impl ScreenChild {
                 "--no-first-run",
                 "--no-default-browser-check",
                 "--password-store=basic",
+            ])
+            // Every request through the daemon's proxy, which keeps to the
+            // user's site limits: pages on this machine too, and nothing on
+            // QUIC or WebRTC's UDP, which would go around it.
+            .arg(format!("--proxy-server=http://{}", self.proxy))
+            .args([
+                "--proxy-bypass-list=<-loopback>",
+                "--disable-quic",
+                "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
                 START_PAGE,
             ])
             .fd_mappings(vec![

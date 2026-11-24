@@ -3,6 +3,7 @@
 
 use std::fs;
 use std::io;
+use std::net::SocketAddr;
 use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -48,6 +49,7 @@ pub struct ScreenProcesses {
     dir: PathBuf,
     desktop: Option<PathBuf>,
     browser: Option<PathBuf>,
+    proxy: SocketAddr,
 }
 
 impl ScreenProcesses {
@@ -56,12 +58,14 @@ impl ScreenProcesses {
         dir: PathBuf,
         desktop: Option<PathBuf>,
         browser: Option<PathBuf>,
+        proxy: SocketAddr,
     ) -> Self {
         Self {
             program,
             dir,
             desktop,
             browser,
+            proxy,
         }
     }
 }
@@ -116,6 +120,7 @@ impl Screens for ScreenProcesses {
             has_view: self.desktop.is_some(),
             user: OnceLock::new(),
             apps: Apps::default(),
+            proxy: self.proxy,
         }))
     }
 }
@@ -150,6 +155,8 @@ pub(crate) struct ScreenChild {
     user: OnceLock<UserLink>,
     /// The apps started on it, for the user's app limits.
     pub(crate) apps: Apps,
+    /// The daemon's filtering proxy, which the browser goes through.
+    pub(crate) proxy: SocketAddr,
 }
 
 pub(crate) struct Pipe {

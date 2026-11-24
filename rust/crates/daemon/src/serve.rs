@@ -33,6 +33,7 @@ pub async fn run(
     stop: CancellationToken,
     desktop: Arc<dyn Desktop>,
     limits: Arc<LimitsFile>,
+    proxy: std::net::TcpListener,
 ) -> Result<(), String> {
     let Listening {
         listener,
@@ -43,6 +44,11 @@ pub async fn run(
     } = listening;
     let listener = into_tokio(listener)?;
     let control = into_tokio(control)?;
+    let proxy = proxy
+        .set_nonblocking(true)
+        .and_then(|()| tokio::net::TcpListener::from_std(proxy))
+        .map_err(|e| format!("can't use the proxy's socket: {e}"))?;
+    let proxy = tokio::spawn(crate::proxy::serve(proxy, limits.clone()));
 
     let (owner, owner_task) = Owner::spawn(clock, screens, desktop, limits);
     let registry = Arc::new(Registry::builtin());
@@ -68,6 +74,7 @@ pub async fn run(
     info!("stopping");
     drop(listener);
     commands.abort();
+    proxy.abort();
     for path in owned_path.iter().chain([&control_path]) {
         if let Err(e) = std::fs::remove_file(path) {
             warn!("can't remove {}: {e}", path.display());
