@@ -149,6 +149,30 @@ pub trait ScreenProcess: Screen {
     fn teardown(&self) -> BoxFuture<'_, ()>;
 }
 
+/// Why the user's desktop couldn't do what was asked, in words for the user.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DesktopError(pub String);
+
+impl fmt::Display for DesktopError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for DesktopError {}
+
+/// The user's desktop, as the live views need it: the one place that knows
+/// which desktop it is. Hyprland first; other desktops implement this later.
+pub trait Desktop: Send + Sync {
+    /// Makes every window with app id `domain::view::APP_ID` open on the
+    /// views' workspace without taking the user there or taking their
+    /// focus. Asked before every view opens, so it must be safe to repeat.
+    fn place_views(&self) -> BoxFuture<'_, Result<(), DesktopError>>;
+    /// Takes the user to the views. Returns where they are, in words for
+    /// the user, such as "workspace 10".
+    fn show_views(&self) -> BoxFuture<'_, Result<String, DesktopError>>;
+}
+
 /// Starts screens: one per session.
 pub trait Screens: Send + Sync {
     /// `Effect::SpawnScreen`. Returns as soon as the process exists, so a
