@@ -50,6 +50,11 @@ impl Request {
         if !is_token(method) {
             return Err(format!("{method:?} isn't a method"));
         }
+        // Nothing but visible ASCII: a stray line feed or control character
+        // would end up in the request line passed on.
+        if !target.chars().all(|c| c.is_ascii_graphic()) {
+            return Err("the request's URL has a character a URL can't have".to_owned());
+        }
         if version != "HTTP/1.1" && version != "HTTP/1.0" {
             return Err(format!("{version:?} isn't HTTP/1.x"));
         }

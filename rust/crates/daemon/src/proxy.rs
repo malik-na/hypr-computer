@@ -59,7 +59,7 @@ pub async fn serve(listener: TcpListener, limits: Arc<LimitsFile>) {
 }
 
 async fn handle(mut client: TcpStream, own: SocketAddr, limits: Arc<LimitsFile>) {
-    let (head, rest) = match timeout(HEAD_TIME, read_head(&mut client)).await {
+    let (head, rest) = match timeout(HEAD_TIME, read_head(&mut client, Vec::new())).await {
         Ok(Ok(Some(read))) => read,
         Ok(Ok(None)) => {
             answer(&mut client, 431, "the request's head is too long").await;
@@ -107,12 +107,13 @@ async fn handle(mut client: TcpStream, own: SocketAddr, limits: Arc<LimitsFile>)
     }
 }
 
-/// Reads a head, up to and with its blank line, and whatever came after it.
-/// `None` if it is longer than [`MAX_HEAD`].
+/// Reads a head, up to and with its blank line, and whatever came after it,
+/// starting from what was already read, `buffer`. `None` if it is longer
+/// than [`MAX_HEAD`].
 async fn read_head(
     from: &mut (impl AsyncRead + Unpin),
+    mut buffer: Vec<u8>,
 ) -> std::io::Result<Option<(Vec<u8>, Vec<u8>)>> {
-    let mut buffer = Vec::new();
     let mut chunk = [0; 4096];
     loop {
         if let Some(end) = find(&buffer, b"\r\n\r\n") {
@@ -143,20 +144,36 @@ async fn forward(client: TcpStream, site: TcpStream) {
         let _ = copy(&mut from_client, &mut to_site).await;
     });
     let download = async {
-        match read_head(&mut from_site).await {
-            Ok(Some((head, rest))) => {
-                to_client.write_all(&closing(&head)).await?;
-                to_client.write_all(&rest).await?;
+        let mut read = Vec::new();
+        loop {
+            match read_head(&mut from_site, read).await? {
+                // An interim answer (100 Continue, 103 Early Hints) comes
+                // before the one that says the connection closes.
+                Some((head, rest)) if is_interim(&head) => {
+                    to_client.write_all(&head).await?;
+                    read = rest;
+                }
+                Some((head, rest)) => {
+                    to_client.write_all(&closing(&head)).await?;
+                    to_client.write_all(&rest).await?;
+                    break;
+                }
+                // A head too long to read: the connection is dropped.
+                None => return Ok(()),
             }
-            // A head too long to read: the connection is dropped.
-            Ok(None) => return Ok(()),
-            Err(e) => return Err(e),
         }
         copy(&mut from_site, &mut to_client).await?;
         to_client.shutdown().await
     };
     let _ = download.await;
     upload.abort();
+}
+
+/// Whether a response head is an interim one: 1xx, but not 101, which ends
+/// HTTP on the connection.
+fn is_interim(head: &[u8]) -> bool {
+    let code = head.split(|b| *b == b' ').nth(1).unwrap_or_default();
+    code.len() == 3 && code.first() == Some(&b'1') && code != b"101"
 }
 
 /// A response head without the headers that keep a connection open, saying
@@ -187,9 +204,9 @@ async fn connect(host: &str, port: u16, own: SocketAddr) -> Result<TcpStream, St
         .map_err(|e| format!("can't find {host}: {e}"))?;
     let mut last = format!("{host} is this proxy");
     for address in addresses {
-        if address.port() == own.port()
-            && (address.ip().is_loopback() || address.ip().is_unspecified())
-        {
+        // In any form: `::ffff:127.0.0.1` reaches 127.0.0.1 too.
+        let ip = address.ip().to_canonical();
+        if address.port() == own.port() && (ip.is_loopback() || ip.is_unspecified()) {
             continue;
         }
         match timeout(CONNECT_TIME, TcpStream::connect(address)).await {
