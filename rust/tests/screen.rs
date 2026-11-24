@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::json;
 use support::app::App;
-use support::{Daemon, Env, Shim, alive, files_in, kill_9};
+use support::{Daemon, Env, Shim, agent, alive, files_in, kill_9};
 
 const STILL_STARTING: &str = "Your screen is still starting. Call the tool again in a moment.";
 
@@ -29,14 +29,6 @@ fn daemon_with_screen(env: &Env, script: &str) -> Daemon {
 
 fn real_screen() -> PathBuf {
     support::bin("hypr-computer-screen")
-}
-
-/// An agent whose screen is ready.
-fn agent(env: &Env) -> Shim {
-    let mut shim = Shim::start(env);
-    shim.initialize();
-    shim.screenshot();
-    shim
 }
 
 #[test]
@@ -63,7 +55,7 @@ fn screenshot_shows_the_app_on_the_screen_full_size_and_right_way_up() {
     shim.initialize();
     shim.screenshot();
 
-    let _app = App::paint(&env.screen_socket(1), RED, BLUE);
+    let _app = App::paint(&env, 1, RED, BLUE);
     let shot = shim.screenshot();
     for (x, y) in [(0, 0), (1279, 0), (640, 399)] {
         assert_eq!(shot.pixel(x, y), RED, "at {x},{y}");
@@ -80,8 +72,8 @@ fn two_agents_get_two_screens_and_neither_sees_the_others() {
     let mut a = agent(&env);
     let mut b = agent(&env);
 
-    let _on_a = App::paint(&env.screen_socket(1), RED, RED);
-    let _on_b = App::paint(&env.screen_socket(2), BLUE, BLUE);
+    let _on_a = App::paint(&env, 1, RED, RED);
+    let _on_b = App::paint(&env, 2, BLUE, BLUE);
     assert_eq!(a.screenshot().pixel(640, 400), RED);
     assert_eq!(b.screenshot().pixel(640, 400), BLUE);
     assert!(daemon.log().contains("session 2 started; 2 open"));

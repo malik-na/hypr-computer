@@ -35,7 +35,17 @@ pub fn bin(name: &str) -> PathBuf {
         let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
         let status = Command::new(env!("CARGO"))
             .args([
-                "build", "--quiet", "--bins", "-p", "daemon", "-p", "shim", "-p", "screen",
+                "build",
+                "--quiet",
+                "--bins",
+                "-p",
+                "daemon",
+                "-p",
+                "shim",
+                "-p",
+                "screen",
+                "-p",
+                "workspace-tests",
             ])
             .arg("--manifest-path")
             .arg(workspace.join("Cargo.toml"))
@@ -45,7 +55,7 @@ pub fn bin(name: &str) -> PathBuf {
             .expect("run cargo build");
         assert!(
             status.success(),
-            "building the daemon, shim and screen failed"
+            "building the daemon, shim, screen and test app failed"
         );
         target.join("debug")
     });
@@ -257,6 +267,14 @@ impl Drop for Daemon {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
+}
+
+/// An agent whose screen is ready.
+pub fn agent(env: &Env) -> Shim {
+    let mut shim = Shim::start(env);
+    shim.initialize();
+    shim.screenshot();
+    shim
 }
 
 /// The real shim, driven over its stdin and stdout as an agent would.
