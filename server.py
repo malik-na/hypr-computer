@@ -1806,13 +1806,15 @@ FIREFOX_FAMILY = ("firefox", "librewolf", "zen", "floorp")
 
 def own_profile(cmd: list[str]) -> list[str]:
     """`cmd` with a browser profile of the agent display's own, so that the page opens in a browser there rather
-    than in a window of the user's running browser, and without their logins. A command naming a profile keeps
-    it. The profile is in $XDG_RUNTIME_DIR, so it goes when the user logs out."""
+    than in a window of the user's running browser, and without their logins or extensions: an extension the
+    system installs into every profile can open pages of its own there, such as a sign-in page. A command naming
+    a profile keeps it. The profile is in $XDG_RUNTIME_DIR, so it goes when the user logs out."""
     if any(a.startswith(("--user-data-dir", "--profile", "-profile", "-P")) for a in cmd[1:]):
         return cmd
     exe, path = os.path.basename(cmd[0]), os.path.join(session_env()["XDG_RUNTIME_DIR"], "hypr-computer-browser")
     if any(k in exe for k in CHROMIUM_FAMILY):
-        return [cmd[0], f"--user-data-dir={path}", "--no-first-run", "--no-default-browser-check", *cmd[1:]]
+        return [cmd[0], f"--user-data-dir={path}", "--no-first-run", "--no-default-browser-check",
+                "--disable-extensions", *cmd[1:]]
     if any(k in exe for k in FIREFOX_FAMILY):
         os.makedirs(path, mode=0o700, exist_ok=True)
         return [cmd[0], "--new-instance", "--profile", path, *cmd[1:]]
