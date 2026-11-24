@@ -1,13 +1,12 @@
 //! The Wayland protocols the screen speaks, as Smithay handlers: surfaces and
 //! shared-memory buffers, xdg-shell windows and popups, server-side
-//! decorations (that is, none drawn), and the output. No seat yet: the screen
-//! takes no input.
+//! decorations (that is, none drawn), and the output. The seat is in
+//! `seat.rs`.
 
 use std::sync::LazyLock;
 
 use smithay::backend::renderer::utils::on_commit_buffer_handler;
 use smithay::desktop::{PopupKind, find_popup_root_surface, get_popup_toplevel_coords};
-use smithay::input::{SeatHandler, SeatState};
 use smithay::reexports::wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode as DecorationMode;
 use smithay::reexports::wayland_server::Client;
 use smithay::reexports::wayland_server::protocol::{wl_buffer, wl_seat, wl_surface::WlSurface};
@@ -161,18 +160,6 @@ impl XdgDecorationHandler for State {
 }
 
 impl OutputHandler for State {}
-
-/// xdg-shell needs a seat handler for popup grabs. No seat is advertised, so
-/// apps have none to grab with.
-impl SeatHandler for State {
-    type KeyboardFocus = WlSurface;
-    type PointerFocus = WlSurface;
-    type TouchFocus = WlSurface;
-
-    fn seat_state(&mut self) -> &mut SeatState<Self> {
-        &mut self.seat_state
-    }
-}
 
 delegate_compositor!(State);
 delegate_shm!(State);

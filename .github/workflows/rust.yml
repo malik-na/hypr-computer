@@ -75,6 +75,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
-      # The agent's screen (crates/screen) links these.
-      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpixman-1-dev libxkbcommon-dev
+      # The agent's screen (crates/screen) links pixman and libxkbcommon and
+      # reads xkeyboard-config's files; the tests run foot on it.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpixman-1-dev libxkbcommon-dev xkb-data foot fonts-dejavu-core
       - run: cargo test --locked --workspace
