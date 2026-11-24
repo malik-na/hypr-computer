@@ -1,5 +1,5 @@
-//! The app's seat: it takes the pointer the screen offers, and notes what it
-//! was offered.
+//! The app's seat: it takes the pointer and the keyboard the screen offers,
+//! and notes which it was offered.
 
 use wayland_client::protocol::wl_seat;
 use wayland_client::{Connection, Dispatch, QueueHandle, WEnum};
@@ -25,6 +25,7 @@ impl Dispatch<wl_seat::WlSeat, ()> for App {
                 app.seat.push("pointer");
             }
             if caps.contains(wl_seat::Capability::Keyboard) {
+                seat.get_keyboard(qh, ());
                 app.seat.push("keyboard");
             }
         }

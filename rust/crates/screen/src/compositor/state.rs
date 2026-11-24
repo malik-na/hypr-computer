@@ -24,6 +24,7 @@ use smithay::wayland::shell::xdg::decoration::XdgDecorationState;
 use smithay::wayland::shm::ShmState;
 
 use crate::apps::Apps;
+use crate::keymap::Keymap;
 use crate::reading::Reading;
 use crate::seat::new_seat;
 
@@ -64,6 +65,8 @@ pub struct State {
     pub seat_state: SeatState<State>,
     pub data_device_state: DataDeviceState,
     pub seat: Seat<State>,
+    /// The keyboard's keymap, to look keys up in.
+    pub keymap: Keymap,
     _output_manager_state: OutputManagerState,
     _xdg_decoration_state: XdgDecorationState,
 }
@@ -104,7 +107,7 @@ impl State {
         let mut seat_state = SeatState::new();
         let seat = new_seat(&mut seat_state, &display)?;
 
-        Ok(State {
+        let mut state = State {
             compositor_state: CompositorState::new::<State>(&display),
             xdg_shell_state: XdgShellState::new::<State>(&display),
             shm_state: ShmState::new::<State>(&display, vec![]),
@@ -130,7 +133,10 @@ impl State {
             renderer,
             target,
             damage,
-        })
+            keymap: Keymap::us()?,
+        };
+        state.send_keymap()?;
+        Ok(state)
     }
 
     pub fn stop(&self) {

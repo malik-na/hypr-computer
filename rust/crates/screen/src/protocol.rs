@@ -62,6 +62,7 @@ impl Request {
             Request::Act(Action::Click { at, button, count }) => {
                 format!("click {} {} {} {count}\n", at.x, at.y, button.name())
             }
+            Request::Act(Action::Type(text)) => format!("type {}\n", escape(text)),
         }
     }
 
@@ -93,9 +94,34 @@ impl Request {
                     count: count.parse().ok()?,
                 }))
             }
+            ("type", _) => unescape(rest).map(|text| Request::Act(Action::Type(text))),
             _ => None,
         }
     }
+}
+
+/// `text` on one line: backslash, newline and carriage return escaped.
+fn escape(text: &str) -> String {
+    text.replace('\\', "\\\\")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+}
+
+fn unescape(line: &str) -> Option<String> {
+    let mut text = String::with_capacity(line.len());
+    let mut chars = line.chars();
+    while let Some(c) = chars.next() {
+        text.push(match c {
+            '\\' => match chars.next()? {
+                '\\' => '\\',
+                'n' => '\n',
+                'r' => '\r',
+                _ => return None,
+            },
+            c => c,
+        });
+    }
+    Some(text)
 }
 
 /// Exactly `N` words.

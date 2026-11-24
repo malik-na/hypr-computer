@@ -1745,6 +1745,7 @@ dependencies = [
  "toml",
  "wayland-client",
  "wayland-protocols",
+ "xkbcommon",
 ]
 
 [[package]]

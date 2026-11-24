@@ -15,5 +15,6 @@ mod click;
 mod launch_app;
 mod r#move;
 mod screenshot;
+mod r#type;
 
 pub use registry::{Admit, CallError, Content, Registry, ToolOutput, ToolSpec};

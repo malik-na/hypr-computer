@@ -3,7 +3,7 @@
 //! A headless Wayland compositor built on Smithay, rendering in software. It
 //! starts the agent's apps (see `apps.rs`), which connect to the Wayland
 //! socket given as the only argument; the daemon asks for them, reads the
-//! screen and drives its pointer over stdin and stdout (see
+//! screen and drives its pointer and keyboard over stdin and stdout (see
 //! `screen::protocol`). There is no window on the host and no input device,
 //! so nothing of the user's reaches it. It exits when its stdin closes.
 #![forbid(unsafe_code)]
@@ -12,6 +12,8 @@ mod apps;
 mod capture;
 mod clipboard;
 mod handlers;
+mod keyboard;
+mod keymap;
 mod pointer;
 mod reading;
 mod requests;

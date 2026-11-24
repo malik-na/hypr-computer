@@ -31,6 +31,18 @@ pub fn new_seat(
 }
 
 impl State {
+    /// Gives the keyboard, and so every app, the keymap that `keymap` looks
+    /// keys up in.
+    pub fn send_keymap(&mut self) -> Result<(), String> {
+        let keyboard = self
+            .seat
+            .get_keyboard()
+            .ok_or("the screen has no keyboard")?;
+        keyboard
+            .set_keymap_from_string(self, self.keymap.source())
+            .map_err(|e| format!("can't set the keymap: {e}"))
+    }
+
     /// Gives the keyboard to the window on the screen, if there is one.
     pub fn focus_shown(&mut self) {
         let surface = self

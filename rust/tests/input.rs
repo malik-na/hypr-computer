@@ -111,3 +111,61 @@ fn move_takes_the_pointer_there_without_clicking() {
     assert_eq!(buttons(&log), []);
     assert!(agent.screenshot() != before, "the screen didn't change");
 }
+
+/// The text the app received, as it read it from the keys.
+fn typed(log: &Log) -> String {
+    log.events()
+        .into_iter()
+        .filter(|e| e["event"] == "key")
+        .map(|e| e["text"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+/// Types `text` and checks that the app got exactly that.
+fn type_text(agent: &mut Shim, log: &Log, text: &str) {
+    let before = typed(log).chars().count();
+    act(agent, "type", json!({"text": text}));
+    let got: String = typed(log).chars().skip(before).collect();
+    if got != text {
+        let same = got
+            .chars()
+            .zip(text.chars())
+            .take_while(|(a, b)| a == b)
+            .count();
+        let around = |s: &str| {
+            s.chars()
+                .skip(same.saturating_sub(5))
+                .take(15)
+                .collect::<String>()
+        };
+        panic!(
+            "the app got other text: the first {same} characters match, then it got {:?} for {:?} \
+             ({} characters of {})",
+            around(&got),
+            around(text),
+            got.chars().count(),
+            text.chars().count()
+        );
+    }
+}
+
+#[test]
+fn typed_text_arrives_in_order_and_the_next_screenshot_shows_it() {
+    let env = Env::new();
+    let _daemon = Daemon::start(&env);
+    let (mut agent, log) = agent_with_app(&env);
+    let before = agent.screenshot();
+
+    type_text(
+        &mut agent,
+        &log,
+        "Hello, World! ~`@#$%^&*()_+{}|:\"<>? 1234567890-=[]\\;',./\n\tend",
+    );
+    assert!(agent.screenshot() != before, "the screen didn't change");
+
+    // Far more than an app reads in one go, each letter with Shift.
+    let long: String = (0..3000)
+        .map(|i| char::from(b'A' + (i % 26) as u8))
+        .collect();
+    type_text(&mut agent, &log, &long);
+}
