@@ -250,6 +250,14 @@ impl Daemon {
         self.child.try_wait().unwrap().is_none()
     }
 
+    /// Kills the daemon with SIGKILL, so it gets no chance to clean up, and
+    /// waits for it to be gone.
+    pub fn kill_9(&mut self) {
+        kill_9(self.child.id());
+        wait_exit(&mut self.child, TIMEOUT)
+            .unwrap_or_else(|| panic!("the daemon survived SIGKILL:\n{}", self.log()));
+    }
+
     pub fn terminate(&mut self) -> ExitStatus {
         let ok = Command::new("kill")
             .args(["-TERM", &self.child.id().to_string()])

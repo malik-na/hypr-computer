@@ -159,10 +159,14 @@ fn a_second_daemon_refuses_to_start_and_the_first_keeps_working() {
 fn a_stale_socket_from_a_dead_daemon_is_replaced() {
     let env = Env::new();
     let mut first = Daemon::start(&env);
-    assert!(first.terminate().success());
-    // Leave a socket file nobody listens on, as a daemon killed by SIGKILL would.
-    let stale = std::os::unix::net::UnixListener::bind(env.socket()).unwrap();
-    drop(stale);
+    // A daemon killed by SIGKILL gets no chance to remove its socket, so it
+    // leaves a socket file nobody listens on. Make it with a real daemon in
+    // its own process: binding a listener here would put its fd in this
+    // process, where a child spawned by another test thread can inherit it
+    // (between fork and exec) and keep the socket alive, so the second daemon
+    // would find a live daemon and refuse to start.
+    first.kill_9();
+    assert!(env.socket().exists(), "the killed daemon left no socket");
 
     let _second = Daemon::start(&env);
     let mut shim = Shim::start(&env);
