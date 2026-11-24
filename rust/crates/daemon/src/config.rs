@@ -3,7 +3,8 @@
 //!
 //! ```toml
 //! [log]
-//! days = 3  # how long the action log is kept
+//! days = 3             # how long the action log is kept
+//! screenshots = false  # whether the pictures agents get are kept with it
 //! ```
 //!
 //! A setting that is missing, or wrong, keeps its default; a wrong one is
@@ -17,18 +18,23 @@ use toml::{Table, Value};
 use tracing::warn;
 
 /// The settings in `[log]`.
-const KNOWN: &[&str] = &["days"];
+const KNOWN: &[&str] = &["days", "screenshots"];
 
 /// What the user set, or the defaults.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Settings {
     /// How many days an ended session's log is kept.
     pub days: u64,
+    /// Whether the pictures agents get are saved with the log.
+    pub screenshots: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { days: 3 }
+        Self {
+            days: 3,
+            screenshots: false,
+        }
     }
 }
 
@@ -69,6 +75,16 @@ impl Settings {
                      keeping logs {} days",
                     file.display(),
                     settings.days
+                ),
+            }
+        }
+        if let Some(screenshots) = log.and_then(|log| log.get("screenshots")) {
+            match screenshots.as_bool() {
+                Some(screenshots) => settings.screenshots = screenshots,
+                None => warn!(
+                    "{}: [log] screenshots must be true or false, not {screenshots}; \
+                     screenshots aren't saved",
+                    file.display()
                 ),
             }
         }

@@ -4,13 +4,15 @@
 //! itself, whatever its umask. A record holds what the guard says of a call
 //! (`tools::Call`): its arguments with anything secret already replaced by
 //! its length (`Tool::logged`), and a result word, never the reply's text,
-//! which can echo the arguments.
+//! which can echo the arguments. With screenshots on, the pictures agents
+//! get are saved with it (`screenshots.rs`).
 
 use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions, Permissions};
 use std::io::{self, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -22,6 +24,7 @@ use tracing::warn;
 
 use crate::config::Settings;
 
+mod screenshots;
 mod show;
 mod sweep;
 
@@ -36,6 +39,8 @@ pub struct ActionLog {
     run: String,
     /// How long an ended session's log is kept.
     keep: Duration,
+    /// Whether the pictures agents get are saved.
+    screenshots: bool,
     /// The names (without `.jsonl`) of the running sessions' logs, which
     /// are never removed.
     running: Mutex<HashSet<String>>,
@@ -55,6 +60,7 @@ impl ActionLog {
                 std::process::id()
             ),
             keep: Duration::from_secs(settings.days.saturating_mul(24 * 60 * 60)),
+            screenshots: settings.screenshots,
             running: Mutex::new(HashSet::new()),
         };
         log.private_dirs()?;
@@ -74,6 +80,7 @@ impl ActionLog {
             file: self.dir.join(format!("{name}.jsonl")),
             name,
             agent: OnceLock::new(),
+            pictures: AtomicU64::new(0),
         }
     }
 
@@ -115,6 +122,8 @@ pub struct SessionLog {
     name: String,
     /// The name the agent gave, once it has.
     agent: OnceLock<String>,
+    /// How many pictures it has saved.
+    pictures: AtomicU64,
 }
 
 impl SessionLog {
@@ -135,6 +144,9 @@ impl SessionLog {
         });
         if let Some(arguments) = &call.arguments {
             record["arguments"] = Value::Object(arguments.clone());
+        }
+        if let Some(saved) = call.picture.as_ref().and_then(|png| self.save(png)) {
+            record["screenshot"] = Value::String(saved);
         }
         if let Err(e) = self.append(&record) {
             warn!("can't write the action log {}: {e}", self.file.display());

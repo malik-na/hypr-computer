@@ -3,7 +3,7 @@
 //! this daemon, as `stop <agent>` picks agents. One line per call.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use domain::control::Reply;
 use domain::view::agent_name;
@@ -49,7 +49,7 @@ impl ActionLog {
         sessions.sort_by(|a, b| {
             (a.first("time").as_str(), &a.file).cmp(&(b.first("time").as_str(), &b.file))
         });
-        let shown: Vec<String> = sessions.iter().map(show).collect();
+        let shown: Vec<String> = sessions.iter().map(|s| show(s, &self.dir)).collect();
         Reply::Done(shown.join("\n\n"))
     }
 
@@ -76,8 +76,8 @@ impl ActionLog {
 }
 
 /// "alpha (session 1), started 2026-11-24 10:15:03 UTC", then a line per
-/// call.
-fn show(session: &Session) -> String {
+/// call. `dir` is the log's, which saved screenshots are relative to.
+fn show(session: &Session, dir: &Path) -> String {
     let time = session.first("time").as_str().unwrap_or("");
     let mut lines = vec![format!(
         "{} (session {}), started {} {} UTC",
@@ -86,12 +86,13 @@ fn show(session: &Session) -> String {
         time.get(..10).unwrap_or("?"),
         time.get(11..19).unwrap_or("?"),
     )];
-    lines.extend(session.records.iter().map(call_line));
+    lines.extend(session.records.iter().map(|r| call_line(r, dir)));
     lines.join("\n")
 }
 
-/// "  10:15:03  click x=640 y=400  ok".
-fn call_line(record: &Map<String, Value>) -> String {
+/// "  10:15:03  click x=640 y=400  ok", and where its screenshot was saved,
+/// if it was.
+fn call_line(record: &Map<String, Value>, dir: &Path) -> String {
     let field = |name: &str| record.get(name).and_then(Value::as_str).unwrap_or("");
     let arguments = record
         .get("arguments")
@@ -108,6 +109,11 @@ fn call_line(record: &Map<String, Value>) -> String {
         printable(field("tool")),
         arguments,
         field("result").to_owned(),
+        record
+            .get("screenshot")
+            .and_then(Value::as_str)
+            .map(|saved| printable(&dir.join(saved).display().to_string()))
+            .unwrap_or_default(),
     ];
     let parts: Vec<String> = parts.into_iter().filter(|p| !p.is_empty()).collect();
     format!("  {}", parts.join("  "))
