@@ -233,3 +233,61 @@ Events the spec doesn't allow in a state, and events for a session that is gone,
 - **The user's input itself.** The model has no step for it: the user's input reaches the screen exactly while `control` is `"User"`. The Rust state machine says so with `Effect::Forward`. A button or key the user still holds when they hand back is released by the hand-back.
 - **Which Escapes count.** Escape twice is one step here. In Rust the first Escape goes to the screen and the second hands back; any other key or click between them starts the count again.
 - **Time.** A call may wait as long as the user keeps the screen; an agent's client may give up on it, which is a disconnect or nothing.
+
+## Notice
+
+`Notice.tla` models the notice that tells the user an agent is at work. Each session gets one desktop notification from the notification service on the session bus (`org.freedesktop.Notifications`). It names the agent and says where to watch it, and stays until the user presses OK or Stop. Stop stops that agent and no other, with `Stop`'s stop, as `hypr-computer stop <agent>` does. When the session ends, its notice is replaced by a short-lived "done" notice. When the service fails, or doesn't answer in time, the host desktop shows its own notice instead, which goes away by itself.
+
+The service is another program: it answers when it likes, or never ("Hung"), or fails at once ("Down": no service, or no session bus). It may keep a notification on screen after its sender closes it, as Omarchy's shell does. The daemon asks for the notice once; when the answer is late, it falls back to the host's notice but goes on waiting, so that it can take the service's notice, or replace it with "done" if the session has ended meanwhile.
+
+The session lifecycle is `SessionLifecycle`'s, and the stop is `Stop`'s: here a session is new, open (its agent has said its name) or gone, and `stopped` is only whether the daemon stopped it. Session ids aren't reused, and a session's notice is named by its session.
+
+### Properties
+
+| Property | In plain words |
+| --- | --- |
+| `AtMostOneNotice` | A session has at most one notice on screen that stays until the user answers it |
+| `NoNoticeOutlivesItsSession` | Once a session has ended, its notice is on screen only while the daemon's request to take it off is on its way, or while the daemon still waits for its id to replace it |
+| `StopOnlyItsOwn` | Stop on a notice stops its own session and no other |
+| `StopOnlyLive` | The daemon stops only a session that is open |
+| `UserIsTold` | An open session's notice is shown, by the service or by the host desktop, unless the session ends first |
+| `NoticeGoes` | A notice whose session has ended goes, even if its id came late |
+| `StopTakesEffect` | Stop on a notice stops its session, unless the session ends first |
+
+The last three hold under the assumptions in `Fairness`: a service that is up shows the notice and one that is down fails (a hung one never does anything), the service's answers and the user's reach the daemon, the daemon's timer fires, and the service replaces or closes a notice when asked. Nothing is assumed about agents and the user.
+
+TLC checks two sessions (about 10,000 states, a second); three take minutes and find nothing more, since sessions only meet through `StopStopsAll`. Each session opens and ends once, so a run can end: the configs set `CHECK_DEADLOCK FALSE`.
+
+### The bugs it catches
+
+| Config | The real bug | Property it violates |
+| --- | --- | --- |
+| `CloseOnEnd.cfg` | The Python server's first notice (78fb1c2) was closed when the server exited. Omarchy's shell keeps a notification on screen after its sender closes it, until its own time runs out, and the notice's never does. Fixed before v0.8.0 (e92614e) by replacing it with "AI agent done", which expires in 4 s. | `NoNoticeOutlivesItsSession` |
+| `ForgetLateAnswer.cfg` | In the Python server (v0.8.0, `close_notice`), a server that exits before notify-send has printed the notice's id only stops notify-send, and the notice, which never expires, stays on screen. | `NoNoticeOutlivesItsSession` |
+| `WaitForever.cfg` | The Python server's first notice (78fb1c2) waited for notify-send as long as it took. With no notification service to reach, notify-send doesn't fail but hangs, and no notice appeared. Fixed before v0.8.0 (d2d3d50): 3 s, then Hyprland's notice. | `UserIsTold` |
+| `StopStopsAll.cfg` | The Python server's "Stop agent" (v0.8.0) stops every agent, as `hypr-computer stop` does. #29 asks for Stop to affect only its own session. | `StopOnlyItsOwn` |
+
+TLC's counterexamples: `CloseOnEnd`: an agent connects, the service shows its notice and the daemon learns its id, the agent disconnects and the daemon closes the notice, and the service keeps it. `ForgetLateAnswer`: an agent connects and disconnects before the service has taken the Notify call; the service then shows the notice, which nobody will replace. `WaitForever`: an agent connects to a hung service, and nothing happens, ever. `StopStopsAll`: an agent's notice is shown, the user presses Stop, a second agent connects, and the daemon stops both.
+
+### Rust names
+
+The Rust state machine is `domain::notice::Notices<K, N>`, keyed by session id `K`, with the service's notification ids `N`, and one pure `step(&mut self, Event<K, N>) -> Vec<Effect<K, N>>`; the top of `rust/crates/domain/tests/notice.rs` documents it in full. It holds `notice` (`Notice<N>`, whose `Shown` carries the id); the other variables are the world, or the session's and the stop's.
+
+| Action in the spec | Rust event | Effect |
+| --- | --- | --- |
+| `Connect` | `Event::Connect(k)`: the session is open and its agent has said its name | `Effect::Show(k)`: ask the service for the notice, and start the timer |
+| `Disconnect` | `Event::Disconnect(k)` | `Effect::Done(k, n)` for a notice shown with id `n` |
+| `Shown` | `Event::Shown(k, n)`: Notify answered `n` | `Effect::Done(k, n)` if the session has ended |
+| `Failed` | `Event::Failed(k)`: Notify failed | `Effect::Host(k)`: the host desktop shows its notice, unless it has |
+| `Timeout` | `Event::Timeout(k)`: the timer fired | `Effect::Host(k)` while still asking |
+| `Answer` | `Event::Answer(n, a)`: `ActionInvoked(n, "ok" or "stop")`, or `NotificationClosed(n, _)` | `Effect::Stop(k)` for Stop on session `k`'s shown notice: `stop::Event::Stop(k)` |
+| `ServiceShows`, `ServiceFails`, `ServiceReplaces`, `ServiceCloses`, `DoneExpires`, `UserAnswers` | the world: the notification service and the user | |
+
+Events the spec doesn't allow in a state, and events for a session that is unknown, change nothing and emit no effect. `rust/crates/domain/tests/notice_spec.rs` property-tests `step` against every property above, playing the service and the user, the liveness ones bounded: once its answer or its timer has come, a session's user has been told, and once every answer has come, no notice of an ended session is left. It fails when any of the four bugs is put back into `step`.
+
+### Left out
+
+- **What the notice says, and the host desktop's notice.** The texts, and how the host desktop shows its notice, are the daemon's; the black-box tests in `rust/tests/spec29/` pin them down.
+- **A daemon that dies.** A daemon killed with SIGKILL can't replace its notices. One stopped with SIGTERM ends its sessions first, so their notices are replaced.
+- **OK and closing.** They only take the notice away; the model doesn't tell them apart. After either, and after Stop, the session's end shows no "done": there is no notice left to replace.
+- **Resume.** A session stopped from its notice is resumed with `hypr-computer resume`, which is `Stop`'s; the notice isn't shown again.
