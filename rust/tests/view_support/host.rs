@@ -11,8 +11,12 @@
 //!
 //! The test can read what a window shows, and send it the user's pointer and
 //! keys: clicking a window gives it the keyboard, as Hyprland does, and keys
-//! go to the window with the keyboard.
+//! go to the window with the keyboard. The host has the user's clipboard:
+//! the test can copy to it, as the user does in one of their own apps, and
+//! read what a paste on the desktop would get.
 
+use std::io::{Read, Write};
+use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::{Arc, LazyLock, Mutex};
@@ -49,6 +53,12 @@ use smithay::wayland::compositor::{
     with_states,
 };
 use smithay::wayland::output::{OutputHandler, OutputManagerState};
+use smithay::wayland::selection::data_device::{
+    ClientDndGrabHandler, DataDeviceHandler, DataDeviceState, ServerDndGrabHandler,
+    current_data_device_selection_userdata, request_data_device_client_selection,
+    set_data_device_focus, set_data_device_selection,
+};
+use smithay::wayland::selection::{SelectionHandler, SelectionSource, SelectionTarget};
 use smithay::wayland::shell::xdg::decoration::{XdgDecorationHandler, XdgDecorationState};
 use smithay::wayland::shell::xdg::{
     PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState,
@@ -60,8 +70,8 @@ use smithay::wayland::xdg_activation::{
     XdgActivationHandler, XdgActivationState, XdgActivationToken, XdgActivationTokenData,
 };
 use smithay::{
-    delegate_compositor, delegate_output, delegate_seat, delegate_shm, delegate_viewporter,
-    delegate_xdg_activation, delegate_xdg_decoration, delegate_xdg_shell,
+    delegate_compositor, delegate_data_device, delegate_output, delegate_seat, delegate_shm,
+    delegate_viewporter, delegate_xdg_activation, delegate_xdg_decoration, delegate_xdg_shell,
 };
 
 use super::hyprland::World;
@@ -69,6 +79,8 @@ use super::hyprland::World;
 /// The size Hyprland gives each window here.
 pub const TILE: (i32, i32) = (1280, 800);
 const FRAME: Duration = Duration::from_millis(16);
+/// The text types the user's clipboard offers, and asks a window for.
+const TEXT_TYPES: [&str; 3] = ["text/plain;charset=utf-8", "text/plain", "UTF8_STRING"];
 
 /// A pointer button, as evdev numbers it.
 pub const BTN_LEFT: u32 = 0x110;
@@ -141,7 +153,17 @@ enum Command {
     Click(String, (f64, f64), u32, mpsc::Sender<Result<(), String>>),
     Hover(String, (f64, f64), mpsc::Sender<Result<(), String>>),
     Keys(String, Vec<String>, mpsc::Sender<Result<(), String>>),
+    Copy(String, mpsc::Sender<()>),
+    Paste(mpsc::Sender<Result<Pasted, String>>),
     Stop,
+}
+
+/// What a paste on the desktop gets: the text the test copied, or a pipe
+/// that the window owning the clipboard writes it into.
+enum Pasted {
+    Nothing,
+    Text(String),
+    From(std::io::PipeReader),
 }
 
 pub struct Host {
@@ -223,6 +245,32 @@ impl Host {
         let keys = keys.iter().map(|k| (*k).to_owned()).collect();
         self.ask(|tx| Command::Keys(address.to_owned(), keys, tx))
     }
+
+    /// The user copies `text` in one of their own apps.
+    pub fn copy(&self, text: &str) {
+        self.ask(|tx| Command::Copy(text.to_owned(), tx));
+    }
+
+    /// What a paste on the user's desktop gets now: `None` if the clipboard
+    /// is empty, or its owner doesn't answer.
+    pub fn paste(&self) -> Option<String> {
+        let pasted = self
+            .ask(Command::Paste)
+            .unwrap_or_else(|e| panic!("can't paste on the desktop: {e}"));
+        match pasted {
+            Pasted::Nothing => None,
+            Pasted::Text(text) => Some(text),
+            Pasted::From(mut pipe) => {
+                let (tx, rx) = mpsc::channel();
+                thread::spawn(move || {
+                    let mut text = String::new();
+                    let read = pipe.read_to_string(&mut text);
+                    let _ = tx.send(read.map(|_| text));
+                });
+                rx.recv_timeout(Duration::from_secs(5)).ok()?.ok()
+            }
+        }
+    }
 }
 
 impl Drop for Host {
@@ -256,6 +304,9 @@ struct State {
     shm_state: ShmState,
     seat_state: SeatState<State>,
     activation_state: XdgActivationState,
+    data_device_state: DataDeviceState,
+    /// The text types of the clipboard a window set, if one did.
+    clipboard_types: Vec<String>,
     _output_manager_state: OutputManagerState,
     _decoration_state: XdgDecorationState,
     _viewporter_state: ViewporterState,
@@ -316,6 +367,8 @@ fn run(
         xdg_shell_state: XdgShellState::new::<State>(&dh),
         shm_state: ShmState::new::<State>(&dh, vec![]),
         activation_state: XdgActivationState::new::<State>(&dh),
+        data_device_state: DataDeviceState::new::<State>(&dh),
+        clipboard_types: Vec::new(),
         _output_manager_state: OutputManagerState::new_with_xdg_output::<State>(&dh),
         _decoration_state: XdgDecorationState::new::<State>(&dh),
         _viewporter_state: ViewporterState::new::<State>(&dh),
@@ -416,6 +469,15 @@ impl State {
             }
             Command::Keys(address, keys, reply) => {
                 let _ = reply.send(self.press_keys(&address, &keys));
+            }
+            Command::Copy(text, reply) => {
+                let types = TEXT_TYPES.iter().map(|t| (*t).to_owned()).collect();
+                set_data_device_selection(&self.display, &self.seat, types, text);
+                self.clipboard_types.clear();
+                let _ = reply.send(());
+            }
+            Command::Paste(reply) => {
+                let _ = reply.send(self.paste());
             }
             Command::Stop => self.signal.stop(),
         }
@@ -668,6 +730,26 @@ impl State {
         Ok(())
     }
 
+    fn paste(&mut self) -> Result<Pasted, String> {
+        if let Some(text) = current_data_device_selection_userdata(&self.seat) {
+            return Ok(Pasted::Text(text.clone()));
+        }
+        let Some(mime) = TEXT_TYPES
+            .iter()
+            .find(|t| self.clipboard_types.iter().any(|c| c == *t))
+        else {
+            return Ok(Pasted::Nothing);
+        };
+        let (reader, writer) = std::io::pipe().map_err(|e| e.to_string())?;
+        match request_data_device_client_selection(&self.seat, (*mime).to_owned(), writer.into()) {
+            Ok(()) => {
+                let _ = self.display.flush_clients();
+                Ok(Pasted::From(reader))
+            }
+            Err(_) => Ok(Pasted::Nothing),
+        }
+    }
+
     fn window_for(&self, surface: &WlSurface) -> Option<usize> {
         self.windows
             .iter()
@@ -860,7 +942,51 @@ impl SeatHandler for State {
     fn seat_state(&mut self) -> &mut SeatState<Self> {
         &mut self.seat_state
     }
+
+    /// The window with the keyboard is the one that can paste, as on any
+    /// desktop.
+    fn focus_changed(&mut self, seat: &Seat<Self>, focused: Option<&WlSurface>) {
+        let client = focused.and_then(Resource::client);
+        set_data_device_focus(&self.display, seat, client);
+    }
 }
+
+impl SelectionHandler for State {
+    /// The text the test copied.
+    type SelectionUserData = String;
+
+    fn new_selection(
+        &mut self,
+        ty: SelectionTarget,
+        source: Option<SelectionSource>,
+        _: Seat<Self>,
+    ) {
+        if ty == SelectionTarget::Clipboard {
+            self.clipboard_types = source.map(|s| s.mime_types()).unwrap_or_default();
+        }
+    }
+
+    fn send_selection(
+        &mut self,
+        _: SelectionTarget,
+        _: String,
+        fd: OwnedFd,
+        _: Seat<Self>,
+        text: &String,
+    ) {
+        let mut pipe = std::fs::File::from(fd);
+        let _ = pipe.write_all(text.as_bytes());
+    }
+}
+
+impl DataDeviceHandler for State {
+    fn data_device_state(&self) -> &DataDeviceState {
+        &self.data_device_state
+    }
+}
+
+impl ClientDndGrabHandler for State {}
+impl ServerDndGrabHandler for State {}
 
 delegate_compositor!(State);
 delegate_shm!(State);
@@ -870,3 +996,4 @@ delegate_xdg_activation!(State);
 delegate_viewporter!(State);
 delegate_output!(State);
 delegate_seat!(State);
+delegate_data_device!(State);
