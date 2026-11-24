@@ -13,7 +13,7 @@ use ports::{
 use tokio::sync::{mpsc, oneshot};
 
 use super::Msg;
-use super::stops::STOPPED;
+use super::stops::STOPPED_DURING;
 
 pub(super) struct Pass {
     id: SessionId,
@@ -136,7 +136,7 @@ impl Screen for Pass {
             }
             self.abort().await;
             self.over.store(true, Ordering::SeqCst);
-            self.is_stopped().then(|| STOPPED.to_owned())
+            self.is_stopped().then(|| STOPPED_DURING.to_owned())
         })
     }
 }

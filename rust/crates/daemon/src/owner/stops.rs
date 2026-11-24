@@ -18,6 +18,12 @@ use super::{Admission, State, refusal};
 pub(super) const STOPPED: &str = "Stopped by the user: your screen gets no more input from you \
      until they let you go on. Stop here and ask the user what to do next.";
 
+/// What a tool call gets when the stop came while it ran.
+pub(super) const STOPPED_DURING: &str = "Stopped by the user while this call was running: part \
+     of it may have happened, so look at your screen before you do it again. Your screen gets no \
+     more input from you until the user lets you go on. Stop here and ask the user what to do \
+     next.";
+
 /// A `hypr-computer stop` waiting for the inputs in progress to be released.
 pub(super) struct Waiter {
     /// The sessions still stopping.
@@ -82,10 +88,12 @@ impl State {
             0 => "No agent is working. Agents that start now are stopped until \
                   `hypr-computer resume`."
                 .to_owned(),
+            1 => "Stopped 1 agent. Its screen stays; agents that start now are stopped too, \
+                  until `hypr-computer resume`."
+                .to_owned(),
             n => format!(
-                "Stopped {}. Their screens stay; agents that start now are stopped too, \
-                 until `hypr-computer resume`.",
-                agents(n)
+                "Stopped {n} agents. Their screens stay; agents that start now are stopped too, \
+                 until `hypr-computer resume`."
             ),
         };
         self.stop_waiters.push(Waiter {
