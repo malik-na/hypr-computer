@@ -1,5 +1,5 @@
-//! The agent's pointer: moves, clicks and the wheel, given straight to the
-//! screen's seat.
+//! The agent's pointer: moves, clicks, drags and the wheel, given straight to
+//! the screen's seat.
 
 use ports::{Button, Point};
 use screen::SIZE;
@@ -14,6 +14,9 @@ use crate::state::State;
 /// How far one wheel notch scrolls, in the units of `wl_pointer.axis`, as
 /// libinput reports a common mouse's.
 const NOTCH: f64 = 15.0;
+
+/// How many moves a drag makes on its way.
+const DRAG_STEPS: u32 = 10;
 
 /// Where `point` is on the screen, or why it isn't.
 fn on_screen(point: Point) -> Result<Position<f64, Logical>, String> {
@@ -62,6 +65,24 @@ impl State {
             self.button(button, ButtonState::Released)?;
         }
         Ok(())
+    }
+
+    /// Presses at `from`, moves to `to` in steps, and releases there.
+    pub fn drag(&mut self, from: Point, to: Point) -> Result<(), String> {
+        on_screen(to)?;
+        self.move_pointer(from)?;
+        self.button(Button::Left, ButtonState::Pressed)?;
+        for step in 1..=DRAG_STEPS {
+            let along = |a: u32, b: u32| {
+                let (a, b) = (i64::from(a), i64::from(b));
+                (a + (b - a) * i64::from(step) / i64::from(DRAG_STEPS)) as u32
+            };
+            self.move_pointer(Point {
+                x: along(from.x, to.x),
+                y: along(from.y, to.y),
+            })?;
+        }
+        self.button(Button::Left, ButtonState::Released)
     }
 
     /// Turns the wheel one notch at a time, as a mouse does.

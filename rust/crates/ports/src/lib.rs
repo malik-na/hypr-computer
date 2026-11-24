@@ -113,6 +113,8 @@ pub enum Action {
     /// Moves the pointer to `at`, then turns the wheel `down` notches down
     /// and `right` notches right; negative is up or left.
     Scroll { at: Point, down: i32, right: i32 },
+    /// Presses the left button at `from`, moves to `to` and releases it.
+    Drag { from: Point, to: Point },
 }
 
 /// An agent's screen, as its tools see it.
