@@ -2,7 +2,8 @@
 //! screen's teardown ends it. It gets this screen as its display and nothing
 //! of the user's session: no other display, no session bus, and a runtime dir
 //! of the screen's own in place of the user's, whose sockets (the bus,
-//! Hyprland's, the portals') lead to the user's desktop.
+//! Hyprland's, the portals') lead to the user's desktop. It is told to use
+//! the daemon's filtering proxy (`http_proxy` and the like).
 
 use std::collections::VecDeque;
 use std::ffi::OsStr;
@@ -33,6 +34,18 @@ const POLL: Duration = Duration::from_millis(10);
 const OUTPUT_TAIL: usize = 2000;
 /// How long an app that ended may take to hand over the last of its output.
 const DRAIN_TIME: Duration = Duration::from_millis(100);
+/// The variables that tell programs which proxy to use, set to the daemon's
+/// filtering proxy for every app.
+const PROXY_VARS: &[&str] = &[
+    "http_proxy",
+    "https_proxy",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "all_proxy",
+    "ALL_PROXY",
+];
+/// The variables that would let programs go around it.
+const NO_PROXY_VARS: &[&str] = &["no_proxy", "NO_PROXY"];
 /// What would lead an app to the user's desktop instead of this screen.
 const USERS_SESSION: &[&str] = &[
     "DISPLAY",
@@ -70,8 +83,14 @@ impl ScreenChild {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .process_group(self.group.as_raw_nonzero().get());
-        for name in USERS_SESSION {
+        for name in USERS_SESSION.iter().chain(NO_PROXY_VARS) {
             command.env_remove(name);
+        }
+        // Programs that honour these go through the user's site limits;
+        // programs that ignore them aren't limited.
+        let proxy = format!("http://{}", self.proxy);
+        for name in PROXY_VARS {
+            command.env(name, &proxy);
         }
         Ok(command)
     }

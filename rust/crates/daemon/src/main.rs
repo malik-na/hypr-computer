@@ -83,7 +83,13 @@ fn main() -> ExitCode {
         }
     };
     info!("{}", listening.describe());
-    let limits = Arc::new(LimitsFile::new(listening.dir.join(paths::LIMITS_NAME)));
+    let browser = std::env::var_os("HYPR_COMPUTER_BROWSER")
+        .filter(|b| !b.is_empty())
+        .map(PathBuf::from);
+    let limits = Arc::new(LimitsFile::new(
+        listening.dir.join(paths::LIMITS_NAME),
+        browser.clone(),
+    ));
     // The proxy every agent's browser goes through: on loopback only.
     let proxy = match std::net::TcpListener::bind(("127.0.0.1", 0)).and_then(|proxy| {
         let address = proxy.local_addr()?;
@@ -103,9 +109,7 @@ fn main() -> ExitCode {
         program,
         listening.dir.clone(),
         desktop.clone(),
-        std::env::var_os("HYPR_COMPUTER_BROWSER")
-            .filter(|b| !b.is_empty())
-            .map(PathBuf::from),
+        browser,
         proxy.1,
     ));
     let desktop = adapters::desktop(
