@@ -181,6 +181,10 @@ path = "allow_command_spec.rs"
 name = "read_only_spec"
 path = "read_only_spec.rs"
 
+[[test]]
+name = "password_manager_spec"
+path = "password_manager_spec.rs"
+
 # The tiny Wayland app the tests put on a screen (see support/app.rs).
 [[bin]]
 name = "hc-test-app"

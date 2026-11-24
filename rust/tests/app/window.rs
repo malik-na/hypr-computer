@@ -43,10 +43,14 @@ impl Window {
     }
 
     /// Makes the surface a window, which the screen shows.
-    pub fn open(&mut self, qh: &QueueHandle<App>) {
+    /// With `app_id`, the window has that app id.
+    pub fn open(&mut self, qh: &QueueHandle<App>, app_id: Option<String>) {
         let xdg = self.wm.get_xdg_surface(&self.surface, qh, ());
         let toplevel = xdg.get_toplevel(qh, ());
         toplevel.set_title("test app".to_owned());
+        if let Some(id) = app_id {
+            toplevel.set_app_id(id);
+        }
         self.surface.commit();
         self.xdg = Some((xdg, toplevel));
     }

@@ -4,7 +4,9 @@
 //! up, and writes what happens to it to the file given with `--log`, one JSON
 //! object per line.
 //!
-//! `hc-test-app [--top RRGGBB] [--bottom RRGGBB] [--log PATH] [--dnd]`
+//! `hc-test-app [--top RRGGBB] [--bottom RRGGBB] [--log PATH] [--dnd] [--app-id ID]`
+//!
+//! `--app-id` gives the window that Wayland app id (by default it sets none).
 #![forbid(unsafe_code)]
 
 mod dnd;
@@ -88,6 +90,7 @@ struct Args {
     bottom: [u8; 3],
     log: Option<PathBuf>,
     dnd: bool,
+    app_id: Option<String>,
 }
 
 fn main() -> ExitCode {
@@ -125,7 +128,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     app.dnd.manager = globals.bind(&qh, 3..=3, ()).ok();
     app.take_data_device(&qh);
     queue.roundtrip(&mut app)?;
-    app.window.open(&qh);
+    app.window.open(&qh, args.app_id.clone());
     while !app.window.configured() {
         queue.blocking_dispatch(&mut app)?;
     }
@@ -154,6 +157,7 @@ fn parse_args() -> Result<Args, String> {
         bottom: [0x40; 3],
         log: None,
         dnd: false,
+        app_id: None,
     };
     let mut given = env::args().skip(1);
     while let Some(flag) = given.next() {
@@ -168,6 +172,7 @@ fn parse_args() -> Result<Args, String> {
             "--top" => args.top = colour(&value)?,
             "--bottom" => args.bottom = colour(&value)?,
             "--log" => args.log = Some(PathBuf::from(value)),
+            "--app-id" => args.app_id = Some(value),
             _ => return Err(format!("unknown argument {flag:?}")),
         }
     }
