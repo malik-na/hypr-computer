@@ -78,6 +78,11 @@ impl Tool for LaunchApp {
                         ))
                     }
                 }
+                Ok(Launched::PasswordManager) => ToolOutput::error(format!(
+                    "Refused: {program}'s window is a password manager's or a password \
+                     prompt's, which agents may never see or use, so it was ended. Ask the user \
+                     to do this part themselves."
+                )),
                 Err(e) => ToolOutput::error(format!("Couldn't start {program}: {e}")),
             })
         })

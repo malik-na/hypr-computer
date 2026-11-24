@@ -20,8 +20,8 @@ use smithay::utils::Transform;
 use smithay::wayland::compositor::{CompositorClientState, CompositorState};
 use smithay::wayland::output::OutputManagerState;
 use smithay::wayland::selection::data_device::DataDeviceState;
-use smithay::wayland::shell::xdg::XdgShellState;
 use smithay::wayland::shell::xdg::decoration::XdgDecorationState;
+use smithay::wayland::shell::xdg::{ToplevelSurface, XdgShellState};
 use smithay::wayland::shm::ShmState;
 use smithay::wayland::viewporter::ViewporterState;
 use smithay::wayland::xdg_activation::XdgActivationState;
@@ -56,6 +56,11 @@ pub struct State {
     /// counts as new. Only `shown` is on the screen.
     pub windows: Vec<Window>,
     pub shown: Option<Window>,
+    /// New windows that haven't made their first commit: not on the screen
+    /// until they are vetted (`vaults.rs`).
+    pub pending: Vec<ToplevelSurface>,
+    /// How many windows were refused as password managers'.
+    pub refused: u64,
     pub popups: PopupManager,
     /// An app drew something since apps were last told to draw again.
     pub dirty: bool,
@@ -148,6 +153,8 @@ impl State {
             output,
             windows: Vec::new(),
             shown: None,
+            pending: Vec::new(),
+            refused: 0,
             popups: PopupManager::default(),
             dirty: true,
             windows_drawn: 0,

@@ -24,6 +24,7 @@ mod seat;
 mod share;
 mod state;
 mod user;
+mod vaults;
 mod view;
 mod windows;
 

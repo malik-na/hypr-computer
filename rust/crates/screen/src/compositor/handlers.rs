@@ -67,10 +67,9 @@ impl CompositorHandler for State {
                 self.focus_shown();
             }
         }
-        if let Some(toplevel) = self.window_for(surface).and_then(|w| w.toplevel())
-            && !toplevel.is_initial_configure_sent()
-        {
-            toplevel.send_configure();
+        if let Some(at) = self.pending.iter().position(|t| t.wl_surface() == surface) {
+            let toplevel = self.pending.remove(at);
+            self.vet_new_window(toplevel);
         }
         self.popups.commit(surface);
         if let Some(PopupKind::Xdg(popup)) = self.popups.find_popup(surface)
@@ -98,10 +97,16 @@ impl XdgShellHandler for State {
     }
 
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
-        self.add_window(surface);
+        // Shown at its first commit, once it is vetted.
+        self.pending.push(surface);
+    }
+
+    fn app_id_changed(&mut self, surface: ToplevelSurface) {
+        self.vet_app_id(&surface);
     }
 
     fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
+        self.pending.retain(|t| *t != surface);
         self.remove_window(&surface);
     }
 

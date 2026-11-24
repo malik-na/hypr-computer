@@ -61,6 +61,9 @@ pub enum Launched {
         failed: bool,
         output: String,
     },
+    /// Its window was a password manager's or a password prompt's, which
+    /// the screen never shows: the window was refused and the app ended.
+    PasswordManager,
 }
 
 /// A point on a screen, in pixels from its top-left corner.

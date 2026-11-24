@@ -205,6 +205,9 @@ impl ScreenChild {
                 private: None,
                 no_window_yet: matches!(launched, Launched::NoWindow { .. }).then_some(before),
             }),
+            Ok(Launched::PasswordManager) => Err(ScreenError(format!(
+                "the browser {shown}'s window was refused as a password manager's"
+            ))),
             Ok(Launched::Exited { status, output, .. }) => Err(ScreenError(format!(
                 "the browser {shown} exited ({status}) before it opened a window: {output}"
             ))),

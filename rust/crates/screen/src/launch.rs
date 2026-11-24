@@ -83,7 +83,7 @@ impl ScreenChild {
         mut command: Command,
         name: &str,
     ) -> Result<Launched, ScreenError> {
-        let before = self.status().await?.windows;
+        let before = self.status().await?;
         let mut child = command.spawn().map_err(|e| ScreenError(e.to_string()))?;
         // The command holds the parent's copies of what it hands the app.
         drop(command);
@@ -104,7 +104,11 @@ impl ScreenChild {
         let start = Instant::now();
         let mut ended = None;
         loop {
-            if self.status().await?.windows > before {
+            let now = self.status().await?;
+            if now.refused > before.refused {
+                return Ok(Launched::PasswordManager);
+            }
+            if now.windows > before.windows {
                 return Ok(Launched::Window { pid });
             }
             if ended.is_none()
@@ -117,6 +121,11 @@ impl ScreenChild {
                     // A launcher that ended well may have started the app.
                     let failed = !status.as_ref().is_ok_and(ExitStatus::success);
                     if failed || at.elapsed() >= AFTER_LAUNCHER {
+                        // The screen refuses a password manager's window as
+                        // it ends the app, which may be what ended it.
+                        if self.status().await?.refused > before.refused {
+                            return Ok(Launched::PasswordManager);
+                        }
                         for reader in readers.into_iter().flatten() {
                             let _ = tokio::time::timeout(DRAIN_TIME, reader).await;
                         }

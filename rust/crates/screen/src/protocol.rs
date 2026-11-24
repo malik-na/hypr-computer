@@ -221,6 +221,9 @@ pub struct Status {
     pub unread: bool,
     /// The process id of the app whose window is in front, if there is one.
     pub front: Option<u32>,
+    /// How many windows were refused as password managers' or password
+    /// prompts', and their apps ended.
+    pub refused: u64,
 }
 
 /// The line that starts a reply.
@@ -249,8 +252,9 @@ impl Reply {
                 idle,
                 unread,
                 front,
+                refused,
             }) => format!(
-                "status {windows} {commits} {} {} {}\n",
+                "status {windows} {commits} {} {} {} {refused}\n",
                 idle.as_millis(),
                 u8::from(*unread),
                 front.unwrap_or(0)
@@ -267,13 +271,14 @@ impl Reply {
         match word {
             "png" => rest.parse().ok().map(Reply::Png),
             "status" => {
-                let [windows, commits, idle, unread, front] = words(rest)?;
+                let [windows, commits, idle, unread, front, refused] = words(rest)?;
                 Some(Reply::Status(Status {
                     windows: windows.parse().ok()?,
                     commits: commits.parse().ok()?,
                     idle: Duration::from_millis(idle.parse().ok()?),
                     unread: unread == "1",
                     front: Some(front.parse().ok()?).filter(|pid| *pid != 0),
+                    refused: refused.parse().ok()?,
                 }))
             }
             "done" => rest.parse().ok().map(Reply::Done),

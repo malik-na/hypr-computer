@@ -71,6 +71,7 @@ pub fn answer(state: &mut State, request: Incoming, out: &mut impl Write) -> io:
                 idle: state.last_commit.elapsed(),
                 unread: state.input_unread(),
                 front: state.front_pid(),
+                refused: state.refused,
             };
             out.write_all(Reply::Status(status).line().as_bytes())?;
         }
