@@ -3,6 +3,7 @@
 
 use std::io::{self, BufRead, Write};
 
+use ports::Action;
 use screen::protocol::{Reply, Request, Status};
 use smithay::reexports::calloop::channel::Sender;
 
@@ -22,6 +23,13 @@ pub fn read(input: impl BufRead, to_loop: &Sender<Incoming>) {
     }
 }
 
+fn act(state: &mut State, action: Action) -> Result<(), String> {
+    match action {
+        Action::Move(to) => state.move_pointer(to),
+        Action::Click { at, button, count } => state.click(at, button, count),
+    }
+}
+
 /// Answers one request. `Err` only if the answer can't be written: the
 /// daemon is gone.
 pub fn answer(state: &mut State, request: Incoming, out: &mut impl Write) -> io::Result<()> {
@@ -36,8 +44,23 @@ pub fn answer(state: &mut State, request: Incoming, out: &mut impl Write) -> io:
         Ok(Request::Status) => {
             let status = Status {
                 windows: state.windows_drawn,
+                commits: state.commits,
+                idle: state.last_commit.elapsed(),
+                unread: state.input_unread(),
             };
             out.write_all(Reply::Status(status).line().as_bytes())?;
+        }
+        Ok(Request::Act(action)) => {
+            // Apps can't have drawn a response yet: they get the input once
+            // this turn of the event loop flushes it.
+            let reply = match act(state, action) {
+                Ok(()) => {
+                    state.input_given();
+                    Reply::Done(state.commits)
+                }
+                Err(why) => Reply::Error(why),
+            };
+            out.write_all(reply.line().as_bytes())?;
         }
         Err(line) => {
             let why = format!("unknown request {line:?}");
