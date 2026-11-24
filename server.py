@@ -829,6 +829,7 @@ def guard(point: tuple[int, int] | None = None, target: Target | None = None, hy
 _noticed = 0.0  # when the user was last shown the notice
 NOTIFY_SEND = "notify-send"
 NOTICE_TITLE = "AI agent at work"
+NOTICE_SHOWN_S = 3.0  # notify-send with no notification service to reach hangs instead of failing
 _notice: subprocess.Popen | None = None  # the notice on screen, until the user answers it
 _notice_id = ""  # its id with the notification service
 
@@ -873,12 +874,19 @@ def await_answer(notice: subprocess.Popen, text: str) -> None:
     """Waits for the user to press a button on the notice. Stop agent stops every agent, as hypr-computer stop
     does; OK, or closing it, lets the agent go on."""
     global _notice_id
-    first = notice.stdout.readline().strip() if notice.stdout else ""
+    shown = notice.stdout is not None and bool(select.select([notice.stdout], [], [], NOTICE_SHOWN_S)[0])
+    first = notice.stdout.readline().strip() if shown and notice.stdout else ""
     _notice_id = first if first.isdigit() else ""
+    if not _notice_id:
+        if notice.poll() is None:
+            notice.kill()
+            hyprland_notice(text)
+        elif notice.returncode > 0:  # a notice the server closed ended with a signal
+            hyprland_notice(text)
+        return
     answer = notice.stdout.read().split() if notice.stdout else []
-    if notice.wait() > 0 and not _notice_id:
-        hyprland_notice(text)  # no notification service; a notice the server closed ended with a signal
-    elif answer == ["stop"]:
+    notice.wait()
+    if answer == ["stop"]:
         open(stop_file(), "w").close()
         with contextlib.suppress(OSError):
             subprocess.Popen([NOTIFY_SEND, "--app-name=hypr-computer", "--icon=input-mouse", "Agents stopped",

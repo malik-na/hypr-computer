@@ -23,6 +23,11 @@ def no_real_desktop(monkeypatch, tmp_path_factory):
     run = tmp_path_factory.mktemp("run")
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(run))
     monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", f"unix:path={run}/bus")
+    stubs = run / "bin"  # notify-send with no service to reach hangs: servers the tests start get one that fails
+    stubs.mkdir()
+    (stubs / "notify-send").write_text("#!/bin/sh\nexit 1\n")
+    (stubs / "notify-send").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{stubs}:{os.environ['PATH']}")
     monkeypatch.setenv("HYPRLAND_INSTANCE_SIGNATURE", "none")
     monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-none")
 

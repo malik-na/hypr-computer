@@ -527,6 +527,7 @@ d={d}
 printf '%s\\n' "$*" >> $d/notify.log
 case " $* " in *" --wait "*) ;; *) exit 0;; esac
 [ -e $d/no-service ] && exit 1
+[ -e $d/dead-bus ] && exec sleep 30
 echo 7
 i=0; while [ ! -e $d/answer ] && [ $i -lt 400 ]; do sleep 0.02; i=$((i+1)); done
 cat $d/answer 2>/dev/null; rm -f $d/answer
@@ -578,6 +579,7 @@ def test_the_notice_stays_until_the_user_answers_it_and_is_not_shown_again_meanw
     notifying.hypr.clients.append(agent_window("foot", "agent shell", "0xa"))
     time.sleep(0.1)
     notifying.call("key", combo="a")
+    time.sleep(0.5)
     assert len(notifying.sent()) == 1
 
 
@@ -608,6 +610,16 @@ def test_without_a_notification_service_hyprland_shows_the_notice(notifying):
     notifying.call("agent_display", action="start")
     server._notice.wait(timeout=5)
     eventually(lambda: notices(notifying))
+    (notice,) = notices(notifying)
+    assert f"AI agent at work: It's working on its own workspace. Watch it on {WATCH}." in notice
+
+
+def test_with_no_service_to_reach_notify_send_hangs_and_hyprland_shows_the_notice(notifying, monkeypatch):
+    monkeypatch.setattr(server, "NOTICE_SHOWN_S", 0.2)
+    (notifying.notify / "dead-bus").touch()
+    notifying.call("agent_display", action="start")
+    eventually(lambda: notices(notifying))
+    assert server._notice.wait(timeout=5) is not None
     (notice,) = notices(notifying)
     assert f"AI agent at work: It's working on its own workspace. Watch it on {WATCH}." in notice
 
