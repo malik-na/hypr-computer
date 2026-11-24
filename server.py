@@ -1668,6 +1668,11 @@ def browser_command(private: bool) -> tuple[list[str], tuple[str, ...]]:
         cmd = shlex.split(override)
     else:
         did = run("xdg-mime", "query", "default", "x-scheme-handler/https").decode().strip().removesuffix(".desktop")
+        if did == "omarchy-browser" and shutil.which("omarchy-cmd-default-browser"):
+            with contextlib.suppress(RuntimeError):
+                real = run("omarchy-cmd-default-browser").decode().strip().removesuffix(".desktop")
+                if real:
+                    did = real
         path = desktop_file(did) if did else None
         if not path:
             raise RuntimeError("no default web browser is set (xdg-settings set default-web-browser ...)")

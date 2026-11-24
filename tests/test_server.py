@@ -403,3 +403,24 @@ def test_private_window_uses_the_default_browsers_own_private_action(tmp_path, m
     monkeypatch.delenv("HYPR_COMPUTER_BROWSER", raising=False)
     assert server.browser_command(False) == (["mybrowser"], ("mybrowser",))
     assert server.browser_command(True) == (["mybrowser", "--secret-mode"], ("mybrowser",))
+
+
+def test_browser_command_unwraps_omarchy_browser_wrapper(tmp_path, monkeypatch):
+    apps = tmp_path / "applications"
+    apps.mkdir()
+    (apps / "omarchy-browser.desktop").write_text(
+        "[Desktop Entry]\nName=Omarchy Browser\nExec=omarchy-launch-browser %U\n")
+    (apps / "chromium.desktop").write_text(
+        "[Desktop Entry]\nName=Chromium\nExec=/usr/bin/chromium %U\n\n"
+        "[Desktop Action new-private-window]\nName=New Incognito Window\nExec=/usr/bin/chromium --incognito\n")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    for name, out in (("xdg-mime", "omarchy-browser.desktop"), ("omarchy-cmd-default-browser", "chromium.desktop")):
+        script = bindir / name
+        script.write_text(f"#!/bin/sh\necho {out}\n")
+        script.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bindir}:{os.environ['PATH']}")
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    monkeypatch.delenv("HYPR_COMPUTER_BROWSER", raising=False)
+    assert server.browser_command(False) == (["/usr/bin/chromium"], ("chromium",))
+    assert server.browser_command(True) == (["/usr/bin/chromium", "--incognito"], ("chromium",))
