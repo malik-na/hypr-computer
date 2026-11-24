@@ -22,10 +22,13 @@ use crate::owner::Owner;
 /// How long sessions get to wind down once the daemon is told to stop.
 const STOP_GRACE: Duration = Duration::from_secs(5);
 
+/// Runs until `stop` is cancelled, which `watch_signals` does on SIGTERM or
+/// SIGINT.
 pub async fn run(
     listening: Listening,
     clock: Arc<dyn Clock>,
     screens: Arc<dyn Screens>,
+    stop: CancellationToken,
 ) -> Result<(), String> {
     let Listening {
         listener,
@@ -38,8 +41,6 @@ pub async fn run(
     let listener = tokio::net::UnixListener::from_std(listener)
         .map_err(|e| format!("can't use the socket: {e}"))?;
 
-    let stop = CancellationToken::new();
-    watch_signals(stop.clone())?;
     let (owner, owner_task) = Owner::spawn(clock, screens);
     let registry = Arc::new(Registry::builtin());
     let sessions = TaskTracker::new();
@@ -90,19 +91,26 @@ pub async fn run(
     Ok(())
 }
 
-fn watch_signals(stop: CancellationToken) -> Result<(), String> {
+/// Starts handling SIGTERM and SIGINT, which cancel the returned token. It
+/// must run inside a tokio runtime, and before the daemon makes its socket
+/// or says it listens: a signal sent any earlier than this would kill it
+/// with the default action, leaving the socket behind and a non-zero exit.
+/// A signal that comes after is held until the daemon starts serving.
+pub fn watch_signals() -> Result<CancellationToken, String> {
+    let stop = CancellationToken::new();
     let mut term =
         signal(SignalKind::terminate()).map_err(|e| format!("can't watch SIGTERM: {e}"))?;
     let mut int =
         signal(SignalKind::interrupt()).map_err(|e| format!("can't watch SIGINT: {e}"))?;
+    let cancel = stop.clone();
     tokio::spawn(async move {
         tokio::select! {
             _ = term.recv() => info!("got SIGTERM"),
             _ = int.recv() => info!("got SIGINT"),
         }
-        stop.cancel();
+        cancel.cancel();
     });
-    Ok(())
+    Ok(stop)
 }
 
 /// One agent connection: its session ends when it closes, and the session
