@@ -29,6 +29,7 @@ use smithay::wayland::xdg_activation::XdgActivationState;
 use crate::keymap::Keymap;
 use crate::reading::Reading;
 use crate::seat::new_seat;
+use crate::user::User;
 use crate::view::View;
 
 /// The screen's size as Smithay wants it.
@@ -46,6 +47,8 @@ pub struct State {
     pub view: Option<View>,
     /// How many views were ever opened.
     pub views_opened: u64,
+    /// The user taking the screen over from the view.
+    pub user: User,
 
     pub space: Space<Window>,
     pub output: Output,
@@ -140,6 +143,7 @@ impl State {
             desktop,
             view: None,
             views_opened: 0,
+            user: User::default(),
             space,
             output,
             windows: Vec::new(),

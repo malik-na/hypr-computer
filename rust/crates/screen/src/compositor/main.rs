@@ -3,13 +3,15 @@
 //! A headless Wayland compositor built on Smithay, rendering in software. The
 //! agent's apps connect to the Wayland socket given as the first argument;
 //! the daemon reads the screen and drives its pointer and keyboard over stdin
-//! and stdout (see `screen::protocol`). There is no input device, so nothing
-//! of the user's reaches it. Its only window on the user's desktop, whose
-//! Wayland socket is the second argument, is its live view, opened when the
-//! daemon asks. It exits when its stdin closes.
+//! and stdout (see `screen::protocol`). There is no input device: the user's
+//! input reaches it only through its live view, while the daemon lets the
+//! user take it over. Its only window on the user's desktop, whose Wayland
+//! socket is the second argument, is that live view, opened when the daemon
+//! asks. It exits when its stdin closes.
 #![forbid(unsafe_code)]
 
 mod activation;
+mod banner;
 mod capture;
 mod clipboard;
 mod handlers;
@@ -20,6 +22,7 @@ mod reading;
 mod requests;
 mod seat;
 mod state;
+mod user;
 mod view;
 mod windows;
 
@@ -31,7 +34,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use screen::protocol::READY;
+use screen::protocol::{READY, USER_SOCKET};
 use smithay::reexports::calloop::generic::Generic;
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay::reexports::calloop::{EventLoop, Interest, Mode, PostAction, channel};
@@ -100,16 +103,17 @@ fn run(socket: PathBuf, desktop: Option<PathBuf>) -> Result<(), Box<dyn Error>> 
         },
     )?;
 
+    // The user's input in the live view, decided by the daemon.
+    if state.desktop.is_some() {
+        user::listen(&handle, &socket.with_file_name(USER_SOCKET))?;
+    }
+
     // The daemon's requests, read on a thread of their own. When stdin
     // closes, the reader ends, the channel closes, and so does the screen.
     let (to_loop, from_stdin) = channel::channel();
     thread::spawn(move || requests::read(io::stdin().lock(), &to_loop));
     handle.insert_source(from_stdin, |event, _, state| match event {
-        channel::Event::Msg(request) => {
-            if requests::answer(state, request, &mut io::stdout().lock()).is_err() {
-                state.stop();
-            }
-        }
+        channel::Event::Msg(request) => state.request(request),
         channel::Event::Closed => state.stop(),
     })?;
 

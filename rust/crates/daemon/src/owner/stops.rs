@@ -6,8 +6,9 @@ use std::sync::Arc;
 
 use domain::SessionId;
 use domain::control::Reply;
-use domain::stop::{Effect, Event, Run};
-use ports::Screen;
+use domain::stop::{Call, Effect, Event, Run};
+use domain::takeover::{self, Effect as TakeOverEffect};
+use ports::{Screen, ScreenProcess};
 use tokio::sync::oneshot;
 use tracing::info;
 
@@ -144,6 +145,7 @@ impl State {
     /// Answers the stops whose sessions are stopped, resumed or gone, and
     /// lets through the tool calls that may run now.
     pub(super) fn after_stop_step(&mut self) {
+        self.finish_calls();
         let stops = &self.stops;
         for waiter in &mut self.stop_waiters {
             waiter
@@ -161,12 +163,13 @@ impl State {
     }
 
     /// Lets each session's waiting tool calls through, in order, as far as
-    /// `Stops` allows.
+    /// `Stops` and the take-over allow. A stopped agent's call is refused at
+    /// once, taken over or not.
     fn admit_waiting(&mut self) {
         let ids: Vec<SessionId> = self
             .sessions
             .iter()
-            .filter(|(_, live)| !live.waiting.is_empty())
+            .filter(|(_, live)| !live.waiting.is_empty() && live.held.is_none())
             .map(|(id, _)| id)
             .collect();
         for id in ids {
@@ -177,23 +180,30 @@ impl State {
             {
                 let admission = match self.serve(id) {
                     Err(why) => Err(why),
-                    Ok(screen) => match self.stops.step(Event::ToolCall(id)).as_slice() {
-                        [Effect::Admit(_)] => {
-                            let call = self.sessions.data_mut(id).map_or(0, |live| {
-                                live.calls += 1;
-                                live.calls
-                            });
-                            let pass = Pass::new(id, call, screen, self.tx.clone());
-                            Ok(Arc::new(pass) as Arc<dyn Screen>)
-                        }
-                        [Effect::Refuse(_)] => Err(STOPPED.to_owned()),
-                        // Another call of the session is in progress.
-                        _ => {
-                            if let Some(live) = self.sessions.data_mut(id) {
-                                live.waiting.push_front(reply);
+                    Ok(screen) => match self.stops.get(id).map(|s| (s.run, s.call)) {
+                        Some((Run::Running, Call::Idle)) => {
+                            match self
+                                .takeovers
+                                .step(takeover::Event::ToolCall(id))
+                                .as_slice()
+                            {
+                                [TakeOverEffect::Admit(_)] => self.pass(id, screen, false),
+                                [TakeOverEffect::Wait(_)] => {
+                                    self.hold(id, reply);
+                                    break;
+                                }
+                                // The previous call is still in progress.
+                                _ => {
+                                    self.wait_turn(id, reply);
+                                    break;
+                                }
                             }
+                        }
+                        Some((Run::Running, _)) => {
+                            self.wait_turn(id, reply);
                             break;
                         }
+                        _ => Err(STOPPED.to_owned()),
                     },
                 };
                 let admitted = admission.is_ok();
@@ -203,6 +213,34 @@ impl State {
                     break;
                 }
             }
+        }
+    }
+
+    /// Puts a call back at the head of its session's queue.
+    fn wait_turn(&mut self, id: SessionId, reply: oneshot::Sender<Admission>) {
+        if let Some(live) = self.sessions.data_mut(id) {
+            live.waiting.push_front(reply);
+        }
+    }
+
+    /// Lets a call of session `id` through `Stops`, onto `screen`; `took_over`
+    /// if it waited for the user to hand the screen back.
+    pub(super) fn pass(
+        &mut self,
+        id: SessionId,
+        screen: Arc<dyn ScreenProcess>,
+        took_over: bool,
+    ) -> Admission {
+        match self.stops.step(Event::ToolCall(id)).as_slice() {
+            [Effect::Admit(_)] => {
+                let call = self.sessions.data_mut(id).map_or(0, |live| {
+                    live.calls += 1;
+                    live.calls
+                });
+                let pass = Pass::new(id, call, screen, self.tx.clone(), took_over);
+                Ok(Arc::new(pass) as Arc<dyn Screen>)
+            }
+            _ => Err(STOPPED.to_owned()),
         }
     }
 }

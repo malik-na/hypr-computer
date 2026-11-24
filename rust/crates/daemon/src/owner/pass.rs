@@ -15,6 +15,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::Msg;
 use super::stops::STOPPED_DURING;
+use super::takeover::TOOK_OVER;
 
 pub(super) struct Pass {
     id: SessionId,
@@ -27,6 +28,8 @@ pub(super) struct Pass {
     /// The call has stepped its `Finish` or `Abort`: the session's call in
     /// progress is no longer this one, so it steps nothing more.
     over: AtomicBool,
+    /// It waited for the user to hand the screen back.
+    took_over: bool,
 }
 
 impl Pass {
@@ -35,6 +38,7 @@ impl Pass {
         call: u64,
         screen: Arc<dyn ScreenProcess>,
         tx: mpsc::UnboundedSender<Msg>,
+        took_over: bool,
     ) -> Self {
         Self {
             id,
@@ -43,6 +47,7 @@ impl Pass {
             tx,
             stopped: AtomicBool::new(false),
             over: AtomicBool::new(false),
+            took_over,
         }
     }
 
@@ -151,6 +156,10 @@ impl Screen for Pass {
             self.over.store(true, Ordering::SeqCst);
             self.is_stopped().then(|| STOPPED_DURING.to_owned())
         })
+    }
+
+    fn note(&self) -> Option<String> {
+        self.took_over.then(|| TOOK_OVER.to_owned())
     }
 }
 

@@ -12,10 +12,65 @@
 //!
 //! Pipes, not a socket: nothing but the daemon can reach the screen this way,
 //! and there is no file to clean up.
+//!
+//! With a desktop, the screen also listens on [`USER_SOCKET`], next to its
+//! Wayland socket, before it says [`READY`]. The daemon connects once, and
+//! the screen then stops listening and removes the file, before any app can
+//! start. On it the screen reports the user's input in the live view, one
+//! [`UserInput`] line each, and the daemon writes [`ViewNotice`] lines: one
+//! `forward` or `drop` per input, in order, and `taken` and `given`.
+
+use ports::{UserInput, ViewNotice};
 
 use std::time::Duration;
 
 use ports::{Action, Button, Point};
+
+/// The file name of the socket for the user's input, in the Wayland
+/// socket's directory.
+pub const USER_SOCKET: &str = "user";
+
+/// A [`UserInput`] as a line.
+pub fn input_line(input: UserInput) -> &'static str {
+    match input {
+        UserInput::Click => "click\n",
+        UserInput::Key { escape: true } => "key escape\n",
+        UserInput::Key { escape: false } => "key other\n",
+        UserInput::Other => "other\n",
+    }
+}
+
+/// A line as read, without its newline.
+pub fn parse_input(line: &str) -> Option<UserInput> {
+    match line {
+        "click" => Some(UserInput::Click),
+        "key escape" => Some(UserInput::Key { escape: true }),
+        "key other" => Some(UserInput::Key { escape: false }),
+        "other" => Some(UserInput::Other),
+        _ => None,
+    }
+}
+
+/// A [`ViewNotice`] as a line.
+pub fn notice_line(notice: ViewNotice) -> &'static str {
+    match notice {
+        ViewNotice::Forward => "forward\n",
+        ViewNotice::Drop => "drop\n",
+        ViewNotice::TakenOver => "taken\n",
+        ViewNotice::Given => "given\n",
+    }
+}
+
+/// A line as read, without its newline.
+pub fn parse_notice(line: &str) -> Option<ViewNotice> {
+    match line {
+        "forward" => Some(ViewNotice::Forward),
+        "drop" => Some(ViewNotice::Drop),
+        "taken" => Some(ViewNotice::TakenOver),
+        "given" => Some(ViewNotice::Given),
+        _ => None,
+    }
+}
 
 /// The screen's first line.
 pub const READY: &str = "ready";
