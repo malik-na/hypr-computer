@@ -21,7 +21,7 @@ mod views;
 
 enum Msg {
     Connect(CancellationToken, oneshot::Sender<SessionId>),
-    /// The agent said its name.
+    /// The agent made its first request.
     Introduce(SessionId, String),
     Disconnect(SessionId, EndReason),
     ToolCall(SessionId, oneshot::Sender<Admission>),
@@ -51,7 +51,8 @@ struct Live {
     screen: Option<Arc<dyn ScreenProcess>>,
     /// Why the session is being torn down; set when the teardown starts.
     ending: Option<EndReason>,
-    /// The agent's name, once it has said it.
+    /// The agent's name, once it has made its first request ("" if it gave
+    /// none then).
     name: Option<String>,
     view: views::View,
 }
@@ -138,7 +139,8 @@ pub struct Gate {
 }
 
 impl Gate {
-    /// The agent said its name, in the MCP handshake.
+    /// The agent made its first request, saying its name, or "" if it gave
+    /// none.
     pub fn introduce(&self, name: String) {
         let _ = self.tx.send(Msg::Introduce(self.id, name));
     }

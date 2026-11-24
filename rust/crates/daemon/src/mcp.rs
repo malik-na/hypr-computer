@@ -2,6 +2,7 @@
 //! Translates between MCP and the `tools` registry; nothing else.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
@@ -19,11 +20,27 @@ use crate::owner::Gate;
 pub struct SessionServer {
     session: Arc<Gate>,
     registry: Arc<Registry>,
+    /// The owner has been told who the agent is.
+    met: AtomicBool,
 }
 
 impl SessionServer {
     pub fn new(session: Arc<Gate>, registry: Arc<Registry>) -> Self {
-        Self { session, registry }
+        Self {
+            session,
+            registry,
+            met: AtomicBool::new(false),
+        }
+    }
+
+    /// Tells the owner who the agent is, on its first request: the name it
+    /// gave in `initialize` or, from MCP 2026-07-28 on, in the request's
+    /// `_meta`, where it is optional; "" if it gave none.
+    fn meet(&self, context: &RequestContext<RoleServer>) {
+        if !self.met.swap(true, Ordering::Relaxed) {
+            let name = context.client_info().map(|info| info.name);
+            self.session.introduce(name.unwrap_or_default());
+        }
     }
 }
 
@@ -39,16 +56,17 @@ impl ServerHandler for SessionServer {
         request: InitializeRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<InitializeResult, ErrorData> {
-        self.session.introduce(request.client_info.name.clone());
         context.peer.set_peer_info(request.clone());
+        self.meet(&context);
         self.negotiate_initialize(&request)
     }
 
     async fn list_tools(
         &self,
         _request: Option<PaginatedRequestParams>,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
+        self.meet(&context);
         Ok(ListToolsResult {
             tools: self.registry.list().into_iter().map(to_mcp_tool).collect(),
             ..Default::default()
@@ -58,8 +76,9 @@ impl ServerHandler for SessionServer {
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
+        self.meet(&context);
         let args = request.arguments.unwrap_or_default();
         match self
             .registry

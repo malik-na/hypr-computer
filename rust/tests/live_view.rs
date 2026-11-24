@@ -82,6 +82,47 @@ fn the_view_waits_for_the_agent_to_say_its_name() {
     assert_eq!(desktop.wait_for_views(1)[0].title, "codex (session 1)");
 }
 
+/// The `_meta` a client on MCP 2026-07-28 sends with every request, in place
+/// of an `initialize` handshake; with its name if `name` is given.
+fn inline_meta(name: Option<&str>) -> serde_json::Value {
+    let mut meta = serde_json::json!({
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {},
+    });
+    if let Some(name) = name {
+        meta["io.modelcontextprotocol/clientInfo"] =
+            serde_json::json!({"name": name, "version": "2"});
+    }
+    serde_json::json!({ "_meta": meta })
+}
+
+#[test]
+fn an_agent_without_a_handshake_is_named_from_its_requests() {
+    let env = Env::new();
+    let mut desktop = Desktop::start(&env);
+    let _daemon = Daemon::start_on(&env, &desktop);
+    let mut shim = Shim::start(&env);
+    let tools = shim.request("tools/list", inline_meta(Some("claude-code")));
+    assert!(tools.get("error").is_none(), "{tools}");
+
+    assert_eq!(
+        desktop.wait_for_views(1)[0].title,
+        "claude-code (session 1)"
+    );
+}
+
+#[test]
+fn an_agent_that_gives_no_name_is_shown_as_an_agent() {
+    let env = Env::new();
+    let mut desktop = Desktop::start(&env);
+    let _daemon = Daemon::start_on(&env, &desktop);
+    let mut shim = Shim::start(&env);
+    let tools = shim.request("tools/list", inline_meta(None));
+    assert!(tools.get("error").is_none(), "{tools}");
+
+    assert_eq!(desktop.wait_for_views(1)[0].title, "agent (session 1)");
+}
+
 #[test]
 fn several_agents_views_are_on_the_desktop_at_once_each_showing_its_own_screen() {
     let env = Env::new();
