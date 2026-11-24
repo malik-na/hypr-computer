@@ -173,6 +173,10 @@ path = "takeover_agents_spec.rs"
 name = "profile_command_spec"
 path = "profile_command_spec.rs"
 
+[[test]]
+name = "open_url_profile_spec"
+path = "open_url_profile_spec.rs"
+
 # The tiny Wayland app the tests put on a screen (see support/app.rs).
 [[bin]]
 name = "hc-test-app"
