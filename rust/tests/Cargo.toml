@@ -173,6 +173,10 @@ path = "takeover_agents_spec.rs"
 name = "notice_shown_spec"
 path = "notice_shown_spec.rs"
 
+[[test]]
+name = "notice_done_spec"
+path = "notice_done_spec.rs"
+
 # The tiny Wayland app the tests put on a screen (see support/app.rs).
 [[bin]]
 name = "hc-test-app"
