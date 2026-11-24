@@ -12,6 +12,8 @@ pub const SOCKET_NAME: &str = "daemon.sock";
 /// The file name of the socket the `hypr-computer` commands use, inside
 /// [`DIR_NAME`].
 pub const CONTROL_NAME: &str = "control.sock";
+/// The file name of the limits `hypr-computer allow` sets, inside [`DIR_NAME`] (`limits::Limits::record`).
+pub const LIMITS_NAME: &str = "limits";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RuntimeDirError {
@@ -57,6 +59,12 @@ pub fn daemon_socket(runtime_dir: Option<&OsStr>) -> Result<PathBuf, RuntimeDirE
 /// `$XDG_RUNTIME_DIR`.
 pub fn control_socket(runtime_dir: Option<&OsStr>) -> Result<PathBuf, RuntimeDirError> {
     Ok(daemon_dir(runtime_dir)?.join(CONTROL_NAME))
+}
+
+/// The limits `hypr-computer allow` sets, given the value of `$XDG_RUNTIME_DIR`: in the runtime dir, so
+/// they hold across a restart of the daemon and end with the login session.
+pub fn limits_file(runtime_dir: Option<&OsStr>) -> Result<PathBuf, RuntimeDirError> {
+    Ok(daemon_dir(runtime_dir)?.join(LIMITS_NAME))
 }
 
 /// The user's desktop's Wayland socket, given the values of

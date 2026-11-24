@@ -219,6 +219,8 @@ pub struct Status {
     pub idle: Duration,
     /// Whether the app on the screen may not have read all the input yet.
     pub unread: bool,
+    /// The process id of the app whose window is in front, if there is one.
+    pub front: Option<u32>,
 }
 
 /// The line that starts a reply.
@@ -246,10 +248,12 @@ impl Reply {
                 commits,
                 idle,
                 unread,
+                front,
             }) => format!(
-                "status {windows} {commits} {} {}\n",
+                "status {windows} {commits} {} {} {}\n",
                 idle.as_millis(),
-                u8::from(*unread)
+                u8::from(*unread),
+                front.unwrap_or(0)
             ),
             Reply::Done(commits) => format!("done {commits}\n"),
             Reply::Json(len) => format!("json {len}\n"),
@@ -263,12 +267,13 @@ impl Reply {
         match word {
             "png" => rest.parse().ok().map(Reply::Png),
             "status" => {
-                let [windows, commits, idle, unread] = words(rest)?;
+                let [windows, commits, idle, unread, front] = words(rest)?;
                 Some(Reply::Status(Status {
                     windows: windows.parse().ok()?,
                     commits: commits.parse().ok()?,
                     idle: Duration::from_millis(idle.parse().ok()?),
                     unread: unread == "1",
+                    front: Some(front.parse().ok()?).filter(|pid| *pid != 0),
                 }))
             }
             "done" => rest.parse().ok().map(Reply::Done),

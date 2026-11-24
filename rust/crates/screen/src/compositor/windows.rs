@@ -7,6 +7,7 @@ use serde_json::json;
 use smithay::backend::renderer::utils::with_renderer_surface_state;
 use smithay::desktop::Window;
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
+use smithay::reexports::wayland_server::Resource;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::wayland::compositor::with_states;
 use smithay::wayland::shell::xdg::{ToplevelSurface, XdgToplevelSurfaceData};
@@ -84,6 +85,14 @@ impl State {
             })
             .collect();
         serde_json::to_vec(&list).unwrap_or_default()
+    }
+
+    /// The process id of the app whose window is on the screen.
+    pub fn front_pid(&self) -> Option<u32> {
+        let toplevel = self.shown.as_ref()?.toplevel()?;
+        let client = toplevel.wl_surface().client()?;
+        let credentials = client.get_credentials(&self.display).ok()?;
+        u32::try_from(credentials.pid).ok()
     }
 
     /// The window whose main surface is `surface`.

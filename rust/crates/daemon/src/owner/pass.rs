@@ -143,6 +143,10 @@ impl Screen for Pass {
         })
     }
 
+    fn front_app(&self) -> BoxFuture<'_, Option<String>> {
+        self.screen.front_app()
+    }
+
     fn end_call(&self) -> BoxFuture<'_, Option<String>> {
         Box::pin(async move {
             // A call that failed holding something can't release it any more:

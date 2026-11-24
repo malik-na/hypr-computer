@@ -4,7 +4,7 @@ use ports::{AppCommand, BoxFuture, Launched, Screen};
 use serde_json::{Map, Value, json};
 
 use crate::args;
-use crate::registry::{CallError, Tool, ToolOutput, ToolSpec};
+use crate::registry::{CallError, Effect, Tool, ToolOutput, ToolSpec};
 
 pub struct LaunchApp;
 
@@ -32,6 +32,10 @@ impl Tool for LaunchApp {
                           everything it starts, ends with your session.",
             input_schema: schema.as_object().cloned().unwrap_or_default(),
         }
+    }
+
+    fn effect(&self) -> Effect {
+        Effect::Launch
     }
 
     fn call<'a>(

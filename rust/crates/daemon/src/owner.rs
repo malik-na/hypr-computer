@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use domain::control::Reply;
 use domain::lifecycle::{Effect, Event, SessionState};
+use domain::limits::{Action, Refusal};
 use domain::stop::{self, Stops};
 use domain::takeover::TakeOvers;
 use domain::{EndReason, SessionId, Sessions};
@@ -20,6 +21,8 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tools::Admit;
 use tracing::info;
+
+use crate::limits::LimitsFile;
 
 mod pass;
 mod stop_one;
@@ -103,6 +106,8 @@ struct Live {
 #[derive(Clone, Debug)]
 pub struct Owner {
     tx: mpsc::UnboundedSender<Msg>,
+    /// The user's limits, which every session's calls go by.
+    limits: Arc<LimitsFile>,
 }
 
 impl Owner {
@@ -112,6 +117,7 @@ impl Owner {
         clock: Arc<dyn Clock>,
         screens: Arc<dyn Screens>,
         desktop: Arc<dyn Desktop>,
+        limits: Arc<LimitsFile>,
     ) -> (Owner, JoinHandle<()>) {
         let (tx, rx) = mpsc::unbounded_channel();
         let state = State {
@@ -124,7 +130,7 @@ impl Owner {
             stop_waiters: Vec::new(),
             takeovers: TakeOvers::new(),
         };
-        (Owner { tx }, tokio::spawn(run(rx, state)))
+        (Owner { tx, limits }, tokio::spawn(run(rx, state)))
     }
 
     /// Opens a session for a new connection, which `connection` closes;
@@ -137,6 +143,7 @@ impl Owner {
             id,
             reason: EndReason::Disconnected,
             tx: self.tx.clone(),
+            limits: self.limits.clone(),
         })
     }
 
@@ -198,6 +205,7 @@ pub struct Ticket {
     id: SessionId,
     reason: EndReason,
     tx: mpsc::UnboundedSender<Msg>,
+    limits: Arc<LimitsFile>,
 }
 
 impl Ticket {
@@ -206,6 +214,7 @@ impl Ticket {
         Gate {
             id: self.id,
             tx: self.tx.clone(),
+            limits: self.limits.clone(),
         }
     }
 
@@ -223,10 +232,12 @@ impl Drop for Ticket {
     }
 }
 
-/// Lets one session's tool calls through, as its lifecycle allows.
+/// Lets one session's tool calls through, as its lifecycle and the user's
+/// limits allow.
 pub struct Gate {
     id: SessionId,
     tx: mpsc::UnboundedSender<Msg>,
+    limits: Arc<LimitsFile>,
 }
 
 impl Gate {
@@ -247,6 +258,10 @@ impl Admit for Gate {
                 .map_err(|_| stopped())?;
             answer.await.map_err(|_| stopped())?
         })
+    }
+
+    fn allows(&self, action: Action<'_>) -> Result<(), Refusal> {
+        self.limits.check(action)
     }
 }
 
