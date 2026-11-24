@@ -126,6 +126,8 @@ impl Registry {
     /// that apply to every tool (stop, take-over, limits, the action log)
     /// belong in this function, not in the tools. A call the session doesn't
     /// let through gets a failed result that says why, and the tool never runs.
+    /// One stopped on the way gets what [`Screen::end_call`] says instead of
+    /// its result.
     pub async fn call(
         &self,
         session: &dyn Admit,
@@ -137,9 +139,14 @@ impl Registry {
             .iter()
             .find(|t| t.spec().name == name)
             .ok_or_else(|| CallError::UnknownTool(name.to_owned()))?;
-        match session.admit().await {
-            Ok(screen) => tool.call(screen.as_ref(), args).await,
-            Err(why) => Ok(ToolOutput::error(why)),
+        let screen = match session.admit().await {
+            Ok(screen) => screen,
+            Err(why) => return Ok(ToolOutput::error(why)),
+        };
+        let output = tool.call(screen.as_ref(), args).await;
+        match screen.end_call().await {
+            Some(why) => Ok(ToolOutput::error(why)),
+            None => output,
         }
     }
 }

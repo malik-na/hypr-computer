@@ -5,11 +5,13 @@
 //! A connection holds a [`Ticket`] that ends its session when dropped, so a
 //! session ends however its connection ends: closed, broken, or a panic.
 
+use std::collections::VecDeque;
 use std::future::Future;
 use std::sync::Arc;
 
 use domain::control::Reply;
 use domain::lifecycle::{Effect, Event, SessionState};
+use domain::stop::{self, Stops};
 use domain::{EndReason, SessionId, Sessions};
 use ports::{BoxFuture, Clock, Desktop, Screen, ScreenProcess, Screens};
 use tokio::sync::{mpsc, oneshot};
@@ -18,6 +20,8 @@ use tokio_util::sync::CancellationToken;
 use tools::Admit;
 use tracing::info;
 
+mod pass;
+mod stops;
 mod views;
 
 enum Msg {
@@ -26,9 +30,22 @@ enum Msg {
     Introduce(SessionId, String),
     Disconnect(SessionId, EndReason),
     ToolCall(SessionId, oneshot::Sender<Admission>),
+    /// An event of a tool call in progress (`domain::stop`), and where its
+    /// effects go.
+    Input(
+        stop::Event<SessionId>,
+        oneshot::Sender<Vec<stop::Effect<SessionId>>>,
+    ),
+    /// The pass of a session's call (its number) went away before the call
+    /// ended.
+    Dropped(SessionId, u64),
     Screen(SessionId, News),
     /// `hypr-computer watch`.
     Watch(oneshot::Sender<Reply>),
+    /// `hypr-computer stop`.
+    StopAll(oneshot::Sender<Reply>),
+    /// `hypr-computer resume`.
+    ResumeAll(oneshot::Sender<Reply>),
     Stop,
 }
 
@@ -58,6 +75,10 @@ struct Live {
     /// none then).
     name: Option<String>,
     view: views::View,
+    /// Tool calls waiting for the one in progress, oldest first.
+    waiting: VecDeque<oneshot::Sender<Admission>>,
+    /// How many of its tool calls were let through: the last one's number.
+    calls: u64,
 }
 
 /// A handle to the owner. Cheap to clone.
@@ -81,6 +102,8 @@ impl Owner {
             screens,
             desktop,
             tx: tx.clone(),
+            stops: Stops::new(),
+            stop_waiters: Vec::new(),
         };
         (Owner { tx }, tokio::spawn(run(rx, state)))
     }
@@ -101,8 +124,23 @@ impl Owner {
     /// `hypr-computer watch`: takes the user to the live views. `None` only
     /// if the owner has stopped.
     pub async fn watch(&self) -> Option<Reply> {
+        self.ask(Msg::Watch).await
+    }
+
+    /// `hypr-computer stop`: answers once every agent is stopped. `None`
+    /// only if the owner has stopped.
+    pub async fn stop_all(&self) -> Option<Reply> {
+        self.ask(Msg::StopAll).await
+    }
+
+    /// `hypr-computer resume`. `None` only if the owner has stopped.
+    pub async fn resume_all(&self) -> Option<Reply> {
+        self.ask(Msg::ResumeAll).await
+    }
+
+    async fn ask(&self, msg: fn(oneshot::Sender<Reply>) -> Msg) -> Option<Reply> {
         let (reply, answer) = oneshot::channel();
-        self.tx.send(Msg::Watch(reply)).ok()?;
+        self.tx.send(msg(reply)).ok()?;
         answer.await.ok()
     }
 
@@ -177,6 +215,10 @@ struct State {
     desktop: Arc<dyn Desktop>,
     /// For the screen tasks to report back on.
     tx: mpsc::UnboundedSender<Msg>,
+    /// Which sessions are stopped, and their calls in progress.
+    stops: Stops<SessionId>,
+    /// `hypr-computer stop`s waiting for inputs in progress to be released.
+    stop_waiters: Vec<stops::Waiter>,
 }
 
 async fn run(mut rx: mpsc::UnboundedReceiver<Msg>, mut state: State) {
@@ -186,11 +228,15 @@ async fn run(mut rx: mpsc::UnboundedReceiver<Msg>, mut state: State) {
             Msg::Connect(connection, reply) => state.connect(connection, reply),
             Msg::Introduce(id, name) => state.introduce(id, name),
             Msg::Disconnect(id, reason) => state.event(id, Event::Disconnect, Some(reason)),
-            Msg::ToolCall(id, reply) => {
-                let _ = reply.send(state.tool_call(id));
+            Msg::ToolCall(id, reply) => state.tool_call(id, reply),
+            Msg::Input(event, reply) => {
+                let _ = reply.send(state.input(event));
             }
+            Msg::Dropped(id, call) => state.dropped(id, call),
             Msg::Screen(id, news) => state.news(id, news),
             Msg::Watch(reply) => state.watch(reply),
+            Msg::StopAll(reply) => state.stop_all(reply),
+            Msg::ResumeAll(reply) => state.resume_all(reply),
             Msg::Stop => stopping = true,
         }
         if stopping && state.sessions.open_count() == 0 {
@@ -207,9 +253,12 @@ impl State {
             ending: None,
             name: None,
             view: views::View::default(),
+            waiting: VecDeque::new(),
+            calls: 0,
         };
         let (id, effect) = self.sessions.connect(self.clock.now(), live);
         info!("{id} started; {} open", self.sessions.open_count());
+        self.stop_connect(id);
         let left = reply.send(id).is_err();
         self.act(id, effect);
         if left {
@@ -218,7 +267,9 @@ impl State {
         }
     }
 
-    fn tool_call(&mut self, id: SessionId) -> Admission {
+    /// The screen a tool call of session `id` may use, as its lifecycle
+    /// allows, or why not.
+    fn serve(&mut self, id: SessionId) -> Result<Arc<dyn ScreenProcess>, String> {
         let state = self.sessions.state(id);
         let effect = self
             .sessions
@@ -264,11 +315,15 @@ impl State {
             // Effect::CloseConnection: harmless if the agent already disconnected.
             gone.data.connection.cancel();
             let reason = gone.data.ending.unwrap_or(EndReason::Disconnected);
+            for waiting in gone.data.waiting {
+                let _ = waiting.send(Err(refusal(None)));
+            }
             info!(
                 "{id} ended ({reason}) after {:.2}s; {} open",
                 gone.lasted.as_secs_f64(),
                 self.sessions.open_count()
             );
+            self.stop_disconnect(id);
             self.show_waiting();
             return;
         }

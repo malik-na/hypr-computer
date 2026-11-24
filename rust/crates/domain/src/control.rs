@@ -7,18 +7,26 @@
 pub enum Command {
     /// Show the agents' live views.
     Watch,
+    /// Stop every agent, and every one that connects until `Resume`.
+    Stop,
+    /// Let every agent go on.
+    Resume,
 }
 
 impl Command {
     pub fn line(self) -> &'static str {
         match self {
             Command::Watch => "watch\n",
+            Command::Stop => "stop\n",
+            Command::Resume => "resume\n",
         }
     }
 
     pub fn parse(line: &str) -> Option<Self> {
         match line.trim_end() {
             "watch" => Some(Command::Watch),
+            "stop" => Some(Command::Stop),
+            "resume" => Some(Command::Resume),
             _ => None,
         }
     }

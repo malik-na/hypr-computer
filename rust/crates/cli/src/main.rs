@@ -11,12 +11,15 @@ use std::time::Duration;
 use domain::control::{Command, Reply};
 use domain::paths;
 
-/// How long the daemon may take to answer.
-const ANSWER_TIME: Duration = Duration::from_secs(10);
+/// How long the daemon may take to answer. A stop answers once every call
+/// in progress has given way, and launching an app can take 13 s.
+const ANSWER_TIME: Duration = Duration::from_secs(30);
 
 const USAGE: &str = "usage: hypr-computer <command>
 
-  watch    show the agents' screens (workspace 10)";
+  watch    show the agents' screens (workspace 10)
+  stop     stop every agent, and every one that starts, until resume
+  resume   let every agent go on";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();

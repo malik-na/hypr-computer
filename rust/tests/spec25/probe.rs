@@ -116,6 +116,13 @@ impl Probe {
     /// Opens a window on the screen at `socket`, paints it, and returns once
     /// the screen has the picture.
     pub fn start(socket: &Path) -> Probe {
+        Probe::start_slow(socket, Duration::ZERO)
+    }
+
+    /// Like [`Probe::start`], but a slow app: it answers each of the
+    /// screen's pings only `pong_delay` after it came, reading nothing
+    /// meanwhile, as a busy app does.
+    pub fn start_slow(socket: &Path, pong_delay: Duration) -> Probe {
         let stream = UnixStream::connect(socket)
             .unwrap_or_else(|e| panic!("can't connect to {}: {e}", socket.display()));
         let ours = stream.try_clone().unwrap();
@@ -124,7 +131,7 @@ impl Probe {
         let (tx, rx) = channel();
         let thread = {
             let (log, stop) = (log.clone(), stop.clone());
-            thread::spawn(move || run(stream, log, stop, tx))
+            thread::spawn(move || run(stream, log, stop, tx, pong_delay))
         };
         let (width, height) = rx
             .recv_timeout(TIMEOUT)
@@ -331,6 +338,7 @@ struct State {
     text_input_manager: Option<zwp_text_input_manager_v3::ZwpTextInputManagerV3>,
     text_input: Option<zwp_text_input_v3::ZwpTextInputV3>,
     pending_text: Option<String>,
+    pong_delay: Duration,
 }
 
 impl State {
@@ -394,6 +402,7 @@ fn run(
     log: Arc<Mutex<Vec<Event>>>,
     stop: Arc<AtomicBool>,
     ready: std::sync::mpsc::Sender<(i32, i32)>,
+    pong_delay: Duration,
 ) {
     let connection = Connection::from_socket(stream).unwrap();
     let (globals, mut queue) = registry_queue_init::<State>(&connection).unwrap();
@@ -424,6 +433,7 @@ fn run(
         text_input_manager: globals.bind(&qh, 1..=1, ()).ok(),
         text_input: None,
         pending_text: None,
+        pong_delay: Duration::ZERO,
     };
     if let Some(m) = &state.text_input_manager {
         state.text_input = Some(m.get_text_input(&seat, &qh, ()));
@@ -459,6 +469,7 @@ fn run(
     state.surface = Some(surface);
     state.repaint();
     queue.roundtrip(&mut state).unwrap();
+    state.pong_delay = pong_delay;
     let _ = ready.send((w, h));
     while !stop.load(Ordering::SeqCst) {
         if let Err(e) = queue.blocking_dispatch(&mut state) {
@@ -484,7 +495,7 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for State {
 
 impl Dispatch<xdg_wm_base::XdgWmBase, ()> for State {
     fn event(
-        _: &mut Self,
+        state: &mut Self,
         wm: &xdg_wm_base::XdgWmBase,
         event: xdg_wm_base::Event,
         _: &(),
@@ -492,6 +503,7 @@ impl Dispatch<xdg_wm_base::XdgWmBase, ()> for State {
         _: &QueueHandle<Self>,
     ) {
         if let xdg_wm_base::Event::Ping { serial } = event {
+            thread::sleep(state.pong_delay);
             wm.pong(serial);
         }
     }

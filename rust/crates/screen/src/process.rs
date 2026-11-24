@@ -11,7 +11,8 @@ use std::time::Duration;
 
 use domain::SessionId;
 use ports::{
-    Action, AppCommand, BoxFuture, Launched, Png, Screen, ScreenError, ScreenProcess, Screens,
+    Action, AppCommand, BoxFuture, InputGate, Launched, Png, Screen, ScreenError, ScreenProcess,
+    Screens,
 };
 use rustix::process::{Pid, Signal, kill_process_group, test_kill_process_group};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
@@ -219,19 +220,43 @@ impl ScreenChild {
         }
     }
 
-    /// Does `action`, then holds the pipe until the screen has settled, so
-    /// no other call sees the screen before the app has drawn its response.
-    async fn act_and_settle(&self, action: Action) -> Result<(), ScreenError> {
+    /// Does `action`, asking `gate` before each of its inputs but a release,
+    /// then holds the pipe until the screen has settled, so no other call
+    /// sees the screen before the app has drawn its response. Refused, it
+    /// releases the button it holds, if any, and fails.
+    async fn act_and_settle(
+        &self,
+        action: Action,
+        gate: &dyn InputGate,
+    ) -> Result<(), ScreenError> {
         let mut pipe = self.pipe.lock().await;
         let mut since = 0;
+        // Where the left button is held down.
+        let mut held = None;
         for (n, part) in parts(action)?.into_iter().enumerate() {
             if n > 0 {
                 self.wait_read(&mut pipe).await?;
+            }
+            let release = matches!(part, Request::Release(_));
+            if !release && !gate.ask(matches!(part, Request::Press(_))).await {
+                if let Some(at) = held {
+                    self.ask_on(&mut pipe, &Request::Release(at)).await?;
+                }
+                return Err(ScreenError("the input was stopped".to_owned()));
             }
             since = match self.ask_on(&mut pipe, &part).await? {
                 Answer::Done(commits) => commits,
                 _ => return Err(mismatch()),
             };
+            held = match part {
+                Request::Press(at) => Some(at),
+                Request::Act(Action::Move(at)) if held.is_some() => Some(at),
+                Request::Release(_) => None,
+                _ => held,
+            };
+            if release {
+                gate.released().await;
+            }
         }
         self.settle(&mut pipe, since).await
     }
@@ -287,7 +312,7 @@ impl Screen for ScreenChild {
     }
 
     fn act(&self, action: Action) -> BoxFuture<'_, Result<(), ScreenError>> {
-        Box::pin(self.act_and_settle(action))
+        Box::pin(self.act_and_settle(action, &Open))
     }
 
     fn launch(&self, app: AppCommand) -> BoxFuture<'_, Result<Launched, ScreenError>> {
@@ -351,6 +376,14 @@ impl ScreenProcess for ScreenChild {
         })
     }
 
+    fn act_gated<'a>(
+        &'a self,
+        action: Action,
+        gate: &'a dyn InputGate,
+    ) -> BoxFuture<'a, Result<(), ScreenError>> {
+        Box::pin(self.act_and_settle(action, gate))
+    }
+
     fn exited(&self) -> BoxFuture<'_, ()> {
         let mut exited = self.exited.clone();
         Box::pin(async move {
@@ -373,6 +406,19 @@ impl ScreenProcess for ScreenChild {
                 warn!("can't remove {}: {e}", self.dir.display());
             }
         })
+    }
+}
+
+/// A gate that lets every input through.
+struct Open;
+
+impl InputGate for Open {
+    fn ask(&self, _holds: bool) -> BoxFuture<'_, bool> {
+        Box::pin(async { true })
+    }
+
+    fn released(&self) -> BoxFuture<'_, ()> {
+        Box::pin(async {})
     }
 }
 

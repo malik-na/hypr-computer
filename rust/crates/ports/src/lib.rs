@@ -128,6 +128,22 @@ pub trait Screen: Send + Sync {
     /// Starts an app on this screen and on no other, and waits a while for
     /// its window. The app ends with the screen, and so does all it starts.
     fn launch(&self, app: AppCommand) -> BoxFuture<'_, Result<Launched, ScreenError>>;
+    /// The guard is done with this screen for the tool call it was given
+    /// for: `Some(why)` if the call was stopped on the way, and the agent
+    /// gets `why` instead of the tool's result.
+    fn end_call(&self) -> BoxFuture<'_, Option<String>> {
+        Box::pin(async { None })
+    }
+}
+
+/// Asked before each input a tool call gives its screen: how a stop reaches
+/// an input in progress (`domain::stop`).
+pub trait InputGate: Send + Sync {
+    /// Whether the next input may be given; `holds` if it leaves a button or
+    /// key held down. `false`: give no more input, and release what is held.
+    fn ask(&self, holds: bool) -> BoxFuture<'_, bool>;
+    /// Everything the call held down is released.
+    fn released(&self) -> BoxFuture<'_, ()>;
 }
 
 /// An agent's screen, as the daemon runs it: the steps of
@@ -146,6 +162,13 @@ pub trait ScreenProcess: Screen {
     fn open_view(&self, title: String) -> BoxFuture<'_, Result<(), ScreenError>>;
     /// Resolves when the process has exited, for whatever reason.
     fn exited(&self) -> BoxFuture<'_, ()>;
+    /// `Screen::act`, asking `gate` before each input. Refused, it releases
+    /// what the action holds down and fails.
+    fn act_gated<'a>(
+        &'a self,
+        action: Action,
+        gate: &'a dyn InputGate,
+    ) -> BoxFuture<'a, Result<(), ScreenError>>;
     /// `Effect::Teardown`: kills the screen and everything it started, waits
     /// until they are gone, and removes the files they leave. Needs nothing
     /// from the screen itself.
