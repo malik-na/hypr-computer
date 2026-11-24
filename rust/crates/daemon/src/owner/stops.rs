@@ -47,9 +47,12 @@ impl State {
         effects
     }
 
-    /// The pass of session `id`'s call in progress went away before the call
-    /// ended: it ends now.
-    pub(super) fn dropped(&mut self, id: SessionId) {
+    /// The pass of session `id`'s call number `call` went away before the
+    /// call ended: it ends now, unless a later call is in progress.
+    pub(super) fn dropped(&mut self, id: SessionId, call: u64) {
+        if self.sessions.data_mut(id).map(|live| live.calls) != Some(call) {
+            return;
+        }
         for event in [Event::Release, Event::Finish, Event::Abort] {
             self.stops.step(event(id));
         }
@@ -96,11 +99,15 @@ impl State {
     /// `hypr-computer resume`: every agent goes on, and agents that connect
     /// from now on work.
     pub(super) fn resume_all(&mut self, reply: oneshot::Sender<Reply>) {
+        let n = self
+            .stop_ids()
+            .into_iter()
+            .filter(|id| self.stops.get(*id).is_some_and(|s| s.run != Run::Running))
+            .count();
         self.stops.step(Event::ResumeAll);
-        let n = self.stop_ids().len();
         info!("resumed every agent ({n})");
         let answer = match n {
-            0 => "No agent is working. Agents that start now can work.".to_owned(),
+            0 => "No agent was stopped. Agents that start now can work.".to_owned(),
             n => format!("Resumed {}.", agents(n)),
         };
         let _ = reply.send(Reply::Done(answer));
@@ -154,7 +161,12 @@ impl State {
                     Err(why) => Err(why),
                     Ok(screen) => match self.stops.step(Event::ToolCall(id)).as_slice() {
                         [Effect::Admit(_)] => {
-                            Ok(Arc::new(Pass::new(id, screen, self.tx.clone())) as Arc<dyn Screen>)
+                            let call = self.sessions.data_mut(id).map_or(0, |live| {
+                                live.calls += 1;
+                                live.calls
+                            });
+                            let pass = Pass::new(id, call, screen, self.tx.clone());
+                            Ok(Arc::new(pass) as Arc<dyn Screen>)
                         }
                         [Effect::Refuse(_)] => Err(STOPPED.to_owned()),
                         // Another call of the session is in progress.

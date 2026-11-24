@@ -36,8 +36,9 @@ enum Msg {
         stop::Event<SessionId>,
         oneshot::Sender<Vec<stop::Effect<SessionId>>>,
     ),
-    /// A call's pass went away before the call ended.
-    Dropped(SessionId),
+    /// The pass of a session's call (its number) went away before the call
+    /// ended.
+    Dropped(SessionId, u64),
     Screen(SessionId, News),
     /// `hypr-computer watch`.
     Watch(oneshot::Sender<Reply>),
@@ -76,6 +77,8 @@ struct Live {
     view: views::View,
     /// Tool calls waiting for the one in progress, oldest first.
     waiting: VecDeque<oneshot::Sender<Admission>>,
+    /// How many of its tool calls were let through: the last one's number.
+    calls: u64,
 }
 
 /// A handle to the owner. Cheap to clone.
@@ -229,7 +232,7 @@ async fn run(mut rx: mpsc::UnboundedReceiver<Msg>, mut state: State) {
             Msg::Input(event, reply) => {
                 let _ = reply.send(state.input(event));
             }
-            Msg::Dropped(id) => state.dropped(id),
+            Msg::Dropped(id, call) => state.dropped(id, call),
             Msg::Screen(id, news) => state.news(id, news),
             Msg::Watch(reply) => state.watch(reply),
             Msg::StopAll(reply) => state.stop_all(reply),
@@ -251,6 +254,7 @@ impl State {
             name: None,
             view: views::View::default(),
             waiting: VecDeque::new(),
+            calls: 0,
         };
         let (id, effect) = self.sessions.connect(self.clock.now(), live);
         info!("{id} started; {} open", self.sessions.open_count());
@@ -311,6 +315,9 @@ impl State {
             // Effect::CloseConnection: harmless if the agent already disconnected.
             gone.data.connection.cancel();
             let reason = gone.data.ending.unwrap_or(EndReason::Disconnected);
+            for waiting in gone.data.waiting {
+                let _ = waiting.send(Err(refusal(None)));
+            }
             info!(
                 "{id} ended ({reason}) after {:.2}s; {} open",
                 gone.lasted.as_secs_f64(),

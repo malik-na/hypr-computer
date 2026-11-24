@@ -17,6 +17,8 @@ use super::stops::STOPPED;
 
 pub(super) struct Pass {
     id: SessionId,
+    /// The call's number in its session.
+    call: u64,
     screen: Arc<dyn ScreenProcess>,
     tx: mpsc::UnboundedSender<Msg>,
     /// The call was told to abort: it gives no more input.
@@ -29,11 +31,13 @@ pub(super) struct Pass {
 impl Pass {
     pub(super) fn new(
         id: SessionId,
+        call: u64,
         screen: Arc<dyn ScreenProcess>,
         tx: mpsc::UnboundedSender<Msg>,
     ) -> Self {
         Self {
             id,
+            call,
             screen,
             tx,
             stopped: AtomicBool::new(false),
@@ -71,7 +75,7 @@ impl Pass {
     }
 
     fn refused(&self) -> ScreenError {
-        ScreenError(STOPPED.to_owned())
+        ScreenError("the call was stopped".to_owned())
     }
 }
 
@@ -109,9 +113,12 @@ impl Screen for Pass {
         })
     }
 
+    /// Starting an app changes the screen as an input does, so it is asked
+    /// for as one.
     fn launch(&self, app: AppCommand) -> BoxFuture<'_, Result<Launched, ScreenError>> {
         Box::pin(async move {
-            if self.is_stopped() {
+            if !self.ask(false).await {
+                self.abort().await;
                 return Err(self.refused());
             }
             self.screen.launch(app).await
@@ -139,7 +146,7 @@ impl Drop for Pass {
     /// mustn't keep its session's next calls waiting.
     fn drop(&mut self) {
         if !self.over.load(Ordering::SeqCst) {
-            let _ = self.tx.send(Msg::Dropped(self.id));
+            let _ = self.tx.send(Msg::Dropped(self.id, self.call));
         }
     }
 }
