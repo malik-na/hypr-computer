@@ -291,6 +291,18 @@ fn apps_on_the_screen_get_a_pointer_and_a_keyboard() {
     );
 }
 
+/// Before it has drawn, a window isn't set up for it: foot 1.16 crashed on
+/// a keyboard it got earlier.
+#[test]
+fn an_app_gets_the_keyboard_only_once_its_window_has_drawn() {
+    let env = Env::new();
+    let _daemon = Daemon::start(&env);
+    let _agent = agent(&env);
+
+    let app = App::paint(&env, 1, RED, BLUE);
+    assert_eq!(app.log.wait_for("keyboard")["drawn"], true);
+}
+
 /// foot, a terminal: it won't run on a screen without a clipboard.
 #[test]
 fn a_real_app_runs_on_the_screen_and_stays_up() {
