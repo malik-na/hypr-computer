@@ -166,7 +166,7 @@ When the server starts, it moves itself into a new Linux user namespace and netw
 
 ## Safety
 
-- **On-screen notice.** When an agent starts the agent display, or starts acting after a minute of quiet, Hyprland shows a notice with how to stop it. On the agent display, it says "An AI agent is working on its own workspace" and where to watch it. On your screen, it says "An AI agent is controlling this desktop".
+- **On-screen notice.** When an agent starts the agent display, or starts acting after a minute of quiet, a notification says "AI agent at work": on the agent display, with where to watch it; on your screen, that it's using your mouse and keyboard. It stays until you press **OK**, which lets the agent go on, or **Stop agent**, which stops every agent as `hypr-computer stop` does. When the agent's server exits, it changes to "AI agent done" and goes away. Without a notification service (`notify-send`), Hyprland shows the notice for a few seconds instead.
 - **Stop switch.** `hypr-computer stop` blocks every tool call from all agents, screenshots included, until you run `hypr-computer resume`. A drag in progress stops at its next step. Agents are told to ask you before going on. To bind it to a key, add this to your Hyprland Lua config:
   ```lua
   hl.bind("SUPER + CTRL + ESCAPE", hl.dsp.exec_cmd("touch $XDG_RUNTIME_DIR/hypr-computer.stop"))

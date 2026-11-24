@@ -359,7 +359,7 @@ def test_the_first_app_or_page_opens_on_the_agent_display_which_starts_with_a_li
     assert users_seat(own) == ((600, 500), USER_FOOT, "eDP-1")
     assert own.hypr.monitors[0]["activeWorkspace"]["name"] == "9"
     (notice,) = notices(own)
-    assert f"working on its own workspace (hypr-computer). Watch it on {WATCH}. To stop it" in notice
+    assert f"AI agent at work: It's working on its own workspace. Watch it on {WATCH}. To stop it: hypr-computer stop" in notice
 
 
 def test_a_first_screenshot_shows_the_agent_display_until_the_agent_asks_for_the_users_screen(own, screen):
@@ -406,7 +406,7 @@ def test_without_wl_mirror_the_agent_display_works_and_says_how_to_watch_it(own,
         "The user can't watch it: wl-mirror is not installed (sudo pacman -S wl-mirror).")
     assert len(own.hypr.monitors) == 2 and not own.hypr.dispatched("exec_cmd")
     (notice,) = notices(own)
-    assert "working on its own workspace (hypr-computer). Install wl-mirror to watch it." in notice
+    assert "It's working on its own workspace. Install wl-mirror to watch it. To stop it: hypr-computer stop" in notice
 
 
 def test_the_self_check_looks_at_the_users_screen_and_calls_wl_mirror_optional(own, screen, monkeypatch, capsys):
@@ -519,3 +519,109 @@ def test_the_live_view_is_blacked_out_while_a_password_manager_is_on_the_agent_d
     own.hypr.clients.append({**vault, "workspace": named_workspace(shown)})
     text, (image,) = own.result("screenshot", target="user")
     assert gray(image, (110, 110))[0] < 16 and "Black areas hide deny-listed windows" in text
+
+
+# The notice: a desktop notification that stays until the user presses OK or Stop agent.
+FAKE_NOTIFY_SEND = """#!/bin/sh
+d={d}
+printf '%s\\n' "$*" >> $d/notify.log
+case " $* " in *" --wait "*) ;; *) exit 0;; esac
+[ -e $d/no-service ] && exit 1
+[ -e $d/dead-bus ] && {{ echo 0; exec sleep 30; }}  # as the real one does with no service to reach
+echo 7
+i=0; while [ ! -e $d/answer ] && [ $i -lt 400 ]; do sleep 0.02; i=$((i+1)); done
+cat $d/answer 2>/dev/null; rm -f $d/answer
+"""
+
+@pytest.fixture
+def notifying(own, tmp_path, monkeypatch):
+    """A desktop with a notification service, which the test answers for the user by writing `answer`."""
+    d = tmp_path / "notify"
+    d.mkdir()
+    (d / "notify-send").write_text(FAKE_NOTIFY_SEND.format(d=d))
+    (d / "notify-send").chmod(0o755)
+    monkeypatch.setattr(server, "NOTIFY_SEND", str(d / "notify-send"))
+    own.notify = d
+    own.sent = lambda: (d / "notify.log").read_text().splitlines() if (d / "notify.log").exists() else []
+    yield own
+    if server._notice is not None and server._notice.poll() is None:
+        server._notice.kill()
+
+
+def eventually(cond) -> None:
+    end = time.monotonic() + 5
+    while not cond():
+        assert time.monotonic() < end, "it never happened"
+        time.sleep(0.01)
+
+
+def answer(desktop, button: str) -> None:
+    eventually(lambda: server._notice_id == "7")
+    (desktop.notify / "answer").write_text(button + "\n")
+    server._notice.wait(timeout=5)
+
+
+def test_the_notice_stays_until_the_user_answers_it_and_is_not_shown_again_meanwhile(notifying, monkeypatch):
+    monkeypatch.setattr(server, "NOTICE_IDLE_S", 0.05)
+    notifying.call("agent_display", action="start")
+    eventually(lambda: server._notice_id == "7")
+    (notice,) = notifying.sent()
+    assert "--expire-time=0" in notice and "--action=ok=OK --action=stop=Stop agent" in notice
+    assert notice.endswith(f"AI agent at work It's working on its own workspace. Watch it on {WATCH}.")
+    assert not notices(notifying)
+    notifying.hypr.clients.append(agent_window("foot", "agent shell", "0xa"))
+    time.sleep(0.1)
+    notifying.call("key", combo="a")
+    time.sleep(0.5)
+    assert len(notifying.sent()) == 1
+
+
+def test_stop_agent_on_the_notice_stops_every_agent_and_says_how_to_resume(notifying):
+    notifying.call("agent_display", action="start")
+    answer(notifying, "stop")
+    eventually(lambda: os.path.exists(notifying.hypr.stop_file))
+    with pytest.raises(Exception, match="Stopped by the user"):
+        notifying.call("screenshot")
+    eventually(lambda: len(notifying.sent()) == 2)
+    assert notifying.sent()[1].endswith(
+        "Agents stopped They can't click, type or take screenshots until you run: hypr-computer resume")
+
+
+def test_ok_lets_the_agent_go_on_and_the_notice_comes_back_after_a_quiet_minute(notifying, monkeypatch):
+    notifying.call("agent_display", action="start")
+    notifying.hypr.clients.append(agent_window("foot", "agent shell", "0xa"))
+    answer(notifying, "ok")
+    monkeypatch.setattr(server, "NOTICE_IDLE_S", 0.05)
+    time.sleep(0.1)
+    notifying.call("key", combo="a")
+    eventually(lambda: len(notifying.sent()) == 2)
+    assert not os.path.exists(notifying.hypr.stop_file)
+
+
+def test_without_a_notification_service_hyprland_shows_the_notice(notifying):
+    (notifying.notify / "no-service").touch()
+    notifying.call("agent_display", action="start")
+    server._notice.wait(timeout=5)
+    eventually(lambda: notices(notifying))
+    (notice,) = notices(notifying)
+    assert f"AI agent at work: It's working on its own workspace. Watch it on {WATCH}." in notice
+
+
+def test_with_no_service_to_reach_notify_send_hangs_and_hyprland_shows_the_notice(notifying, monkeypatch):
+    monkeypatch.setattr(server, "NOTICE_SHOWN_S", 0.2)
+    (notifying.notify / "dead-bus").touch()
+    notifying.call("agent_display", action="start")
+    eventually(lambda: notices(notifying))
+    assert server._notice.wait(timeout=5) is not None
+    (notice,) = notices(notifying)
+    assert f"AI agent at work: It's working on its own workspace. Watch it on {WATCH}." in notice
+
+
+def test_when_the_server_exits_its_notice_becomes_one_that_expires(notifying):
+    notifying.call("agent_display", action="start")
+    eventually(lambda: server._notice_id == "7")
+    server.shutdown()
+    assert server._notice.wait(timeout=5) is not None
+    done = notifying.sent()[-1]
+    assert "--replace-id=7" in done and "--expire-time=4000" in done and "--action" not in done
+    assert done.endswith("AI agent done It's no longer using this desktop.")
