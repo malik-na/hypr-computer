@@ -80,6 +80,10 @@ const NOTICE_GRACE: Duration = Duration::from_secs(2);
 /// How long a stopping daemon waits for its last notifications to be sent.
 const FLUSH_GRACE: Duration = Duration::from_secs(1);
 
+/// The longest a stopping owner spends on the notices once its sessions are
+/// gone: its caller's time for it must leave room for this.
+pub const NOTICES_GRACE: Duration = NOTICE_GRACE.saturating_add(FLUSH_GRACE);
+
 /// The answer to a tool call: the screen to run it on, or why not.
 type Admission = Result<Arc<dyn Screen>, String>;
 
