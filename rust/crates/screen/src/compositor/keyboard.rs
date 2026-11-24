@@ -1,5 +1,8 @@
 //! The agent's keyboard: text, typed as key presses given straight to the
-//! screen's seat, to the app on the screen.
+//! screen's seat, to the app on the screen. A character a US keyboard lacks
+//! gets a key of its own in the keymap (see `keymap.rs`).
+
+use std::ops::Range;
 
 use smithay::backend::input::KeyState;
 use smithay::input::keyboard::xkb::{self, Keysym};
@@ -9,24 +12,61 @@ use smithay::utils::SERIAL_COUNTER;
 use crate::keymap::Key;
 use crate::state::State;
 
+/// Some of the symbols to type, and those of them the keymap adds to the US
+/// layout to type them.
+struct Run {
+    syms: Range<usize>,
+    added: Vec<Keysym>,
+}
+
 impl State {
     /// Types `text`. A control character other than newline and tab is
     /// refused before anything is typed.
     pub fn type_text(&mut self, text: &str) -> Result<(), String> {
         let keyboard = self.keyboard()?;
-        let keys = text
-            .chars()
-            .map(|c| {
-                let sym = keysym(c)?;
-                self.keymap
-                    .find(sym)
-                    .ok_or_else(|| format!("can't type {c:?}: it isn't on a US keyboard"))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        for key in keys {
-            self.tap(&keyboard, key);
+        let syms = text.chars().map(keysym).collect::<Result<Vec<_>, _>>()?;
+        for run in self.runs(&syms)? {
+            if self.keymap.add(&run.added)? {
+                self.send_keymap()?;
+            }
+            for sym in &syms[run.syms] {
+                let key = self.keymap.find(*sym).ok_or_else(|| {
+                    format!("can't type {}: no key for it", xkb::keysym_get_name(*sym))
+                })?;
+                self.tap(&keyboard, key);
+            }
         }
         Ok(())
+    }
+
+    /// Splits `syms` into runs that one keymap each can type.
+    fn runs(&self, syms: &[Keysym]) -> Result<Vec<Run>, String> {
+        let room = self.keymap.room();
+        let mut runs = Vec::new();
+        let (mut start, mut added) = (0, Vec::new());
+        for (i, sym) in syms.iter().enumerate() {
+            if self.keymap.on_us_keyboard(*sym) || added.contains(sym) {
+                continue;
+            }
+            if room == 0 {
+                return Err(
+                    "can't type characters a US keyboard lacks: no keys are free".to_owned(),
+                );
+            }
+            if added.len() == room {
+                runs.push(Run {
+                    syms: start..i,
+                    added: std::mem::take(&mut added),
+                });
+                start = i;
+            }
+            added.push(*sym);
+        }
+        runs.push(Run {
+            syms: start..syms.len(),
+            added,
+        });
+        Ok(runs)
     }
 
     /// Presses and releases `key`, holding Shift if it needs it.
