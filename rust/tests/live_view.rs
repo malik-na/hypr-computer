@@ -115,6 +115,20 @@ fn the_view_opens_on_workspace_10_only_once_hyprland_will_keep_it_out_of_the_use
 }
 
 #[test]
+fn a_view_hyprland_refuses_to_place_never_opens() {
+    let env = Env::new();
+    let mut desktop = Desktop::start(&env);
+    desktop.hyprland.answer_with("error: no such rule field");
+    let daemon = Daemon::start_on(&env, &desktop);
+    let mut shim = agent(&env);
+
+    daemon.wait_for_log("session 1: no live view: Hyprland refused");
+    thread::sleep(Duration::from_millis(300));
+    assert_eq!(desktop.views(), [], "it opened where Hyprland put it");
+    assert_eq!(shim.screenshot().width, 1280);
+}
+
+#[test]
 fn the_view_closes_when_its_session_ends() {
     let env = Env::new();
     let mut desktop = Desktop::start(&env);
