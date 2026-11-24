@@ -1,8 +1,8 @@
-//! The agent's pointer: moves, clicks, drags and the wheel, given straight to
-//! the screen's seat.
+//! The agent's pointer: moves, clicks, the left button held for a drag, and
+//! the wheel, given straight to the screen's seat.
 
 use ports::{Button, Point};
-use screen::SIZE;
+use screen::off_screen;
 use smithay::backend::input::{Axis, AxisSource, ButtonState};
 use smithay::desktop::WindowSurfaceType;
 use smithay::input::pointer::{AxisFrame, ButtonEvent, MotionEvent, PointerHandle};
@@ -15,22 +15,12 @@ use crate::state::State;
 /// libinput reports a common mouse's.
 const NOTCH: f64 = 15.0;
 
-/// How many moves a drag makes on its way.
-const DRAG_STEPS: u32 = 10;
-
 /// Where `point` is on the screen, or why it isn't.
 fn on_screen(point: Point) -> Result<Position<f64, Logical>, String> {
-    let (width, height) = SIZE;
-    if point.x >= width || point.y >= height {
-        return Err(format!(
-            "({}, {}) is off your screen, which is {width}x{height}: x is 0 to {}, y is 0 to {}",
-            point.x,
-            point.y,
-            width - 1,
-            height - 1
-        ));
+    match off_screen(point) {
+        Some(why) => Err(why),
+        None => Ok((f64::from(point.x), f64::from(point.y)).into()),
     }
-    Ok((f64::from(point.x), f64::from(point.y)).into())
 }
 
 /// The evdev code of `button` (linux/input-event-codes.h).
@@ -67,21 +57,15 @@ impl State {
         Ok(())
     }
 
-    /// Presses at `from`, moves to `to` in steps, and releases there.
-    pub fn drag(&mut self, from: Point, to: Point) -> Result<(), String> {
-        on_screen(to)?;
-        self.move_pointer(from)?;
-        self.button(Button::Left, ButtonState::Pressed)?;
-        for step in 1..=DRAG_STEPS {
-            let along = |a: u32, b: u32| {
-                let (a, b) = (i64::from(a), i64::from(b));
-                (a + (b - a) * i64::from(step) / i64::from(DRAG_STEPS)) as u32
-            };
-            self.move_pointer(Point {
-                x: along(from.x, to.x),
-                y: along(from.y, to.y),
-            })?;
-        }
+    /// Moves to `at` and presses the left button there: a drag's start.
+    pub fn press(&mut self, at: Point) -> Result<(), String> {
+        self.move_pointer(at)?;
+        self.button(Button::Left, ButtonState::Pressed)
+    }
+
+    /// Moves to `at` and releases the left button there: a drag's end.
+    pub fn release(&mut self, at: Point) -> Result<(), String> {
+        self.move_pointer(at)?;
         self.button(Button::Left, ButtonState::Released)
     }
 

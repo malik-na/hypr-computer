@@ -45,6 +45,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for App {
                 ..
             } => {
                 app.pointer.at = (surface_x, surface_y);
+                app.start_drag(qh);
                 json!({"event": "motion", "x": surface_x, "y": surface_y})
             }
             wl_pointer::Event::Button {
@@ -58,8 +59,11 @@ impl Dispatch<wl_pointer::WlPointer, ()> for App {
                     WEnum::Value(wl_pointer::ButtonState::Pressed) => "down",
                     _ => "up",
                 };
-                if button == RIGHT && state == "down" {
-                    app.open_menu(qh, serial);
+                match (button, state) {
+                    (RIGHT, "down") => app.open_menu(qh, serial),
+                    (LEFT, "down") => app.dnd.pressed = Some(serial),
+                    (LEFT, _) => app.release(),
+                    _ => {}
                 }
                 json!({"event": "button", "button": button_name(button), "state": state, "x": x, "y": y})
             }
@@ -85,6 +89,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for App {
     }
 }
 
+const LEFT: u32 = 0x110;
 const RIGHT: u32 = 0x111;
 
 fn button_name(button: u32) -> Value {

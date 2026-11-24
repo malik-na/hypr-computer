@@ -30,8 +30,27 @@ fn act(state: &mut State, action: Action) -> Result<(), String> {
         Action::Type(text) => state.type_text(&text),
         Action::Key(combo) => state.press_keys(&combo),
         Action::Scroll { at, down, right } => state.scroll(at, down, right),
-        Action::Drag { from, to } => state.drag(from, to),
+        Action::Drag { .. } => Err("a drag comes as a press, moves and a release".to_owned()),
     }
+}
+
+/// Gives an input, and answers `done` with how many times apps had drawn by
+/// then, or why the input couldn't be given.
+fn give(
+    state: &mut State,
+    out: &mut impl Write,
+    input: impl FnOnce(&mut State) -> Result<(), String>,
+) -> io::Result<()> {
+    // Apps can't have drawn a response yet: they get the input once this
+    // turn of the event loop flushes it.
+    let reply = match input(state) {
+        Ok(()) => {
+            state.input_given();
+            Reply::Done(state.commits)
+        }
+        Err(why) => Reply::Error(why),
+    };
+    out.write_all(reply.line().as_bytes())
 }
 
 /// Answers one request. `Err` only if the answer can't be written: the
@@ -54,18 +73,9 @@ pub fn answer(state: &mut State, request: Incoming, out: &mut impl Write) -> io:
             };
             out.write_all(Reply::Status(status).line().as_bytes())?;
         }
-        Ok(Request::Act(action)) => {
-            // Apps can't have drawn a response yet: they get the input once
-            // this turn of the event loop flushes it.
-            let reply = match act(state, action) {
-                Ok(()) => {
-                    state.input_given();
-                    Reply::Done(state.commits)
-                }
-                Err(why) => Reply::Error(why),
-            };
-            out.write_all(reply.line().as_bytes())?;
-        }
+        Ok(Request::Act(action)) => give(state, out, |state| act(state, action))?,
+        Ok(Request::Press(at)) => give(state, out, |state| state.press(at))?,
+        Ok(Request::Release(at)) => give(state, out, |state| state.release(at))?,
         Err(line) => {
             let why = format!("unknown request {line:?}");
             out.write_all(Reply::Error(why).line().as_bytes())?;

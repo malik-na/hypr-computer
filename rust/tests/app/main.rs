@@ -4,9 +4,10 @@
 //! up, and writes what happens to it to the file given with `--log`, one JSON
 //! object per line.
 //!
-//! `hc-test-app [--top RRGGBB] [--bottom RRGGBB] [--log PATH]`
+//! `hc-test-app [--top RRGGBB] [--bottom RRGGBB] [--log PATH] [--dnd]`
 #![forbid(unsafe_code)]
 
+mod dnd;
 mod keyboard;
 mod log;
 mod menu;
@@ -24,6 +25,7 @@ use wayland_client::globals::registry_queue_init;
 use wayland_client::protocol::wl_seat;
 use wayland_client::{Connection, QueueHandle};
 
+use crate::dnd::Dnd;
 use crate::keyboard::Keyboard;
 use crate::log::Log;
 use crate::menu::Menu;
@@ -49,6 +51,7 @@ pub struct App {
     pub menu: Option<Menu>,
     pub pointer: Pointer,
     pub keyboard: Keyboard,
+    pub dnd: Dnd,
 }
 
 impl App {
@@ -84,6 +87,7 @@ struct Args {
     top: [u8; 3],
     bottom: [u8; 3],
     log: Option<PathBuf>,
+    dnd: bool,
 }
 
 fn main() -> ExitCode {
@@ -113,10 +117,13 @@ fn run() -> Result<(), Box<dyn Error>> {
         menu: None,
         pointer: Pointer::default(),
         keyboard: Keyboard::default(),
+        dnd: Dnd::new(args.dnd),
     };
     // Optional: with no seat, the app just shows its colours. Like most apps,
     // it takes the keyboard and pointer before it opens its window.
     app.wl_seat = globals.bind(&qh, 5..=9, ()).ok();
+    app.dnd.manager = globals.bind(&qh, 3..=3, ()).ok();
+    app.take_data_device(&qh);
     queue.roundtrip(&mut app)?;
     app.window.open(&qh);
     while !app.window.configured() {
@@ -146,9 +153,14 @@ fn parse_args() -> Result<Args, String> {
         top: [0x80; 3],
         bottom: [0x40; 3],
         log: None,
+        dnd: false,
     };
     let mut given = env::args().skip(1);
     while let Some(flag) = given.next() {
+        if flag == "--dnd" {
+            args.dnd = true;
+            continue;
+        }
         let value = given
             .next()
             .ok_or_else(|| format!("{flag} needs a value"))?;
