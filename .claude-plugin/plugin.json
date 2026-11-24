@@ -1,7 +1,7 @@
 {
   "name": "hypr-computer",
   "displayName": "Hypr Computer",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Private, lightweight computer use for Hyprland: screenshots, clicks, typing, batching and window tools through a local MCP server. No telemetry, no root.",
   "author": {
     "name": "Naeem Malik"
