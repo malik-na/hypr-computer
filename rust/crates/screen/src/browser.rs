@@ -1,7 +1,7 @@
 //! The browser on a screen: a Chromium-family browser, started the first
 //! time the agent opens a page, as an app on the screen like any other (so it
 //! ends with the screen), with a fresh profile in the screen's own directory
-//! (so it is deleted with it).
+//! (so it is deleted with it), extensions off and accessibility on.
 //!
 //! The daemon drives it over its DevTools pipe (see `devtools`). A page has
 //! loaded when the browser says its `load` lifecycle event fired for that
@@ -137,6 +137,11 @@ impl ScreenChild {
             .arg(profile_arg)
             .args([
                 "--remote-debugging-pipe",
+                // No extension opens pages of its own, even one the system's
+                // browser command loads everywhere.
+                "--disable-extensions",
+                // Pages show to accessibility tools.
+                "--force-renderer-accessibility",
                 "--ozone-platform=wayland",
                 "--no-first-run",
                 "--no-default-browser-check",
