@@ -12,6 +12,7 @@ mod registry;
 
 // One line per tool (rustfmt keeps them sorted):
 mod click;
+mod drag;
 mod key;
 mod launch_app;
 mod r#move;

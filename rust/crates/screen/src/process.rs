@@ -165,7 +165,10 @@ impl Pipe {
                 Ok(Ok(Answer::Png(bytes)))
             }
             (Request::Status, Some(Reply::Status(status))) => Ok(Ok(Answer::Status(status))),
-            (Request::Act(_), Some(Reply::Done(commits))) => Ok(Ok(Answer::Done(commits))),
+            (
+                Request::Act(_) | Request::Press(_) | Request::Release(_),
+                Some(Reply::Done(commits)),
+            ) => Ok(Ok(Answer::Done(commits))),
             (_, Some(Reply::Error(why))) => Ok(Err(why)),
             _ => Err(ScreenError(format!(
                 "the screen answered {:?} to {:?}",
@@ -214,11 +217,11 @@ impl ScreenChild {
     async fn act_and_settle(&self, action: Action) -> Result<(), ScreenError> {
         let mut pipe = self.pipe.lock().await;
         let mut since = 0;
-        for (n, part) in parts(action).into_iter().enumerate() {
+        for (n, part) in parts(action)?.into_iter().enumerate() {
             if n > 0 {
                 self.wait_read(&mut pipe).await?;
             }
-            since = match self.ask_on(&mut pipe, &Request::Act(part)).await? {
+            since = match self.ask_on(&mut pipe, &part).await? {
                 Answer::Done(commits) => commits,
                 _ => return Err(mismatch()),
             };

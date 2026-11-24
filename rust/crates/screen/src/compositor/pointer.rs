@@ -1,8 +1,8 @@
-//! The agent's pointer: moves, clicks and the wheel, given straight to the
-//! screen's seat.
+//! The agent's pointer: moves, clicks, the left button held for a drag, and
+//! the wheel, given straight to the screen's seat.
 
 use ports::{Button, Point};
-use screen::SIZE;
+use screen::off_screen;
 use smithay::backend::input::{Axis, AxisSource, ButtonState};
 use smithay::desktop::WindowSurfaceType;
 use smithay::input::pointer::{AxisFrame, ButtonEvent, MotionEvent, PointerHandle};
@@ -17,17 +17,10 @@ const NOTCH: f64 = 15.0;
 
 /// Where `point` is on the screen, or why it isn't.
 fn on_screen(point: Point) -> Result<Position<f64, Logical>, String> {
-    let (width, height) = SIZE;
-    if point.x >= width || point.y >= height {
-        return Err(format!(
-            "({}, {}) is off your screen, which is {width}x{height}: x is 0 to {}, y is 0 to {}",
-            point.x,
-            point.y,
-            width - 1,
-            height - 1
-        ));
+    match off_screen(point) {
+        Some(why) => Err(why),
+        None => Ok((f64::from(point.x), f64::from(point.y)).into()),
     }
-    Ok((f64::from(point.x), f64::from(point.y)).into())
 }
 
 /// The evdev code of `button` (linux/input-event-codes.h).
@@ -62,6 +55,18 @@ impl State {
             self.button(button, ButtonState::Released)?;
         }
         Ok(())
+    }
+
+    /// Moves to `at` and presses the left button there: a drag's start.
+    pub fn press(&mut self, at: Point) -> Result<(), String> {
+        self.move_pointer(at)?;
+        self.button(Button::Left, ButtonState::Pressed)
+    }
+
+    /// Moves to `at` and releases the left button there: a drag's end.
+    pub fn release(&mut self, at: Point) -> Result<(), String> {
+        self.move_pointer(at)?;
+        self.button(Button::Left, ButtonState::Released)
     }
 
     /// Turns the wheel one notch at a time, as a mouse does.

@@ -27,6 +27,11 @@ pub enum Request {
     Status,
     /// Do this with the pointer or keyboard; answered with [`Reply::Done`].
     Act(Action),
+    /// Move there and press the left button, or release it: a drag's ends,
+    /// sent apart so the app can start a drag in between. Answered with
+    /// [`Reply::Done`].
+    Press(Point),
+    Release(Point),
 }
 
 impl Request {
@@ -43,6 +48,11 @@ impl Request {
             Request::Act(Action::Scroll { at, down, right }) => {
                 format!("scroll {} {} {down} {right}\n", at.x, at.y)
             }
+            Request::Act(Action::Drag { from, to }) => {
+                format!("drag {} {} {} {}\n", from.x, from.y, to.x, to.y)
+            }
+            Request::Press(at) => format!("press {} {}\n", at.x, at.y),
+            Request::Release(at) => format!("release {} {}\n", at.x, at.y),
         }
     }
 
@@ -72,6 +82,21 @@ impl Request {
                     at: point(x, y)?,
                     down: down.parse().ok()?,
                     right: right.parse().ok()?,
+                }))
+            }
+            ("press", _) => {
+                let [x, y] = words(rest)?;
+                Some(Request::Press(point(x, y)?))
+            }
+            ("release", _) => {
+                let [x, y] = words(rest)?;
+                Some(Request::Release(point(x, y)?))
+            }
+            ("drag", _) => {
+                let [x1, y1, x2, y2] = words(rest)?;
+                Some(Request::Act(Action::Drag {
+                    from: point(x1, y1)?,
+                    to: point(x2, y2)?,
                 }))
             }
             _ => None,

@@ -319,3 +319,71 @@ fn scroll_turns_the_wheel_over_the_point_one_notch_at_a_time() {
         );
     }
 }
+
+#[test]
+fn drag_presses_at_the_start_moves_there_and_releases_at_the_end() {
+    let env = Env::new();
+    let _daemon = Daemon::start(&env);
+    let (mut agent, log) = agent_with_app(&env);
+    let before = agent.screenshot();
+
+    act(
+        &mut agent,
+        "drag",
+        json!({"x1": 100, "y1": 100, "x2": 500, "y2": 300}),
+    );
+    let mut expected = press("left", 100.0, 100.0);
+    expected[1] = ("left".to_owned(), "up".to_owned(), 500.0, 300.0);
+    assert_eq!(buttons(&log), expected);
+    // The way there is a path, not a jump: apps tell a drag by the moves.
+    let events = log.events();
+    let down = events.iter().position(|e| e["state"] == "down").unwrap();
+    let up = events.iter().position(|e| e["state"] == "up").unwrap();
+    let moves = events[down..up]
+        .iter()
+        .filter(|e| e["event"] == "motion")
+        .count();
+    assert!(moves >= 5, "{moves} moves between press and release");
+    assert!(agent.screenshot() != before, "the screen didn't change");
+}
+
+#[test]
+fn a_drag_to_off_the_screen_is_refused_and_nothing_is_pressed() {
+    let env = Env::new();
+    let _daemon = Daemon::start(&env);
+    let (mut agent, log) = agent_with_app(&env);
+
+    let result = agent.call("drag", json!({"x1": 100, "y1": 100, "x2": 2000, "y2": 300}));
+    assert_eq!(result["isError"], true, "{result}");
+    assert!(support::text(&result).contains("1280x800"), "{result}");
+    assert_eq!(buttons(&log), []);
+}
+
+#[test]
+fn drag_and_drop_lands_where_the_agent_lets_go() {
+    let env = Env::new();
+    let _daemon = Daemon::start(&env);
+    let mut agent = agent(&env);
+    let log = Log::new(&env);
+    // The app starts a drag when it is dragged from, as apps do to drag
+    // something, and only while the button is down.
+    let mut args = app::args(RED, BLUE, &log);
+    args.push("--dnd".to_owned());
+    act(
+        &mut agent,
+        "launch_app",
+        json!({"app": app::program(), "args": args}),
+    );
+    log.wait_for("ready");
+
+    act(
+        &mut agent,
+        "drag",
+        json!({"x1": 100, "y1": 100, "x2": 500, "y2": 300}),
+    );
+    let drop = log.wait_for("drop");
+    assert_eq!(
+        (drop["x"].as_f64(), drop["y"].as_f64()),
+        (Some(500.0), Some(300.0))
+    );
+}
