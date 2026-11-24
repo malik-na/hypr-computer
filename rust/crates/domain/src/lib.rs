@@ -9,4 +9,4 @@ pub mod lifecycle;
 pub mod paths;
 pub mod session;
 
-pub use session::{EndReason, Ended, NotOpen, SessionId, Sessions};
+pub use session::{EndReason, Gone, SessionId, Sessions, Stepped};

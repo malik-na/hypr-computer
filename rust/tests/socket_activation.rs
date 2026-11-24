@@ -11,7 +11,6 @@ use std::os::unix::net::UnixListener;
 use std::process::Command;
 
 use command_fds::{CommandFdExt, FdMapping};
-use serde_json::json;
 use support::{Daemon, Env, Shim, daemon_bin};
 
 #[test]
@@ -43,10 +42,7 @@ fn the_daemon_serves_a_socket_passed_by_systemd() {
     let mut shim = Shim::start(&env);
     let init = shim.initialize();
     assert_eq!(init["serverInfo"]["name"], "hypr-computer");
-    assert_eq!(
-        shim.request("tools/list", json!({}))["result"]["tools"],
-        json!([])
-    );
+    assert_eq!(shim.screenshot().width, 1280);
 
     assert!(daemon.terminate().success(), "{}", daemon.log());
     assert!(

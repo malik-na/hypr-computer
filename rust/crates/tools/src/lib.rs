@@ -10,6 +10,6 @@
 mod registry;
 
 // One line per tool, in the same order as `registry::TOOLS`:
-// mod screenshot;
+mod screenshot;
 
-pub use registry::{CallContext, CallError, Content, Registry, ToolOutput, ToolSpec};
+pub use registry::{Admit, CallError, Content, Registry, ToolOutput, ToolSpec};

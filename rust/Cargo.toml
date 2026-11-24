@@ -24,6 +24,7 @@ domain = { path = "crates/domain" }
 ports = { path = "crates/ports" }
 adapters = { path = "crates/adapters" }
 tools = { path = "crates/tools" }
+screen = { path = "crates/screen" }
 
 listenfd = "1.0.2"
 rmcp = { version = "3.11.0", default-features = false, features = ["server"] }

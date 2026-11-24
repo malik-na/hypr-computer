@@ -23,11 +23,19 @@ path = "socket_activation.rs"
 name = "architecture"
 path = "architecture.rs"
 
+[[test]]
+name = "screen"
+path = "screen.rs"
+
 [dev-dependencies]
+base64 = "0.22.1"
 command-fds = "0.3.3"
+png = "0.17.16"
 serde_json.workspace = true
 tempfile = "3.27.0"
 toml = "0.9"
+wayland-client = "0.31.15"
+wayland-protocols = { version = "0.32.13", features = ["client"] }
 
 [lints]
 workspace = true

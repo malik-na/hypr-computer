@@ -8,11 +8,13 @@ mod owner;
 mod serve;
 
 use std::io::IsTerminal;
+use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
 
 use adapters::SystemClock;
 use listenfd::ListenFd;
+use screen::ScreenProcesses;
 use tracing::{Level, info};
 use tracing_subscriber::filter::Targets;
 use tracing_subscriber::prelude::*;
@@ -48,6 +50,13 @@ fn main() -> ExitCode {
         }
     };
     info!("{}", listening.describe());
+    let screens = match screen_program() {
+        Ok(program) => Arc::new(ScreenProcesses::new(program, listening.dir.clone())),
+        Err(e) => {
+            eprintln!("hypr-computer-daemon: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
 
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -59,11 +68,21 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    match runtime.block_on(serve::run(listening, Arc::new(SystemClock))) {
+    match runtime.block_on(serve::run(listening, Arc::new(SystemClock), screens)) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("hypr-computer-daemon: {e}");
             ExitCode::FAILURE
         }
     }
+}
+
+/// The screen program: `$HYPR_COMPUTER_SCREEN` if set, otherwise
+/// `hypr-computer-screen` next to this program.
+fn screen_program() -> Result<PathBuf, String> {
+    if let Some(program) = std::env::var_os("HYPR_COMPUTER_SCREEN") {
+        return Ok(program.into());
+    }
+    let me = std::env::current_exe().map_err(|e| format!("can't find my own program: {e}"))?;
+    Ok(me.with_file_name("hypr-computer-screen"))
 }
