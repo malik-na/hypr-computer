@@ -11,16 +11,20 @@ use std::sync::Arc;
 
 use domain::control::Reply;
 use domain::lifecycle::{Effect, Event, SessionState};
+use domain::notice::Notices;
 use domain::stop::{self, Stops};
 use domain::takeover::TakeOvers;
 use domain::{EndReason, SessionId, Sessions};
-use ports::{BoxFuture, Clock, Desktop, Screen, ScreenProcess, Screens, UserInput};
+use ports::{
+    BoxFuture, Clock, Desktop, Heard, Notifications, Screen, ScreenProcess, Screens, UserInput,
+};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tools::Admit;
 use tracing::info;
 
+mod notices;
 mod pass;
 mod stop_one;
 mod stops;
@@ -44,6 +48,8 @@ enum Msg {
     /// ended.
     Dropped(SessionId, u64),
     Screen(SessionId, News),
+    /// What the notification service did.
+    Heard(Heard),
     /// `hypr-computer watch`.
     Watch(oneshot::Sender<Reply>),
     /// `hypr-computer stop`.
@@ -112,8 +118,10 @@ impl Owner {
         clock: Arc<dyn Clock>,
         screens: Arc<dyn Screens>,
         desktop: Arc<dyn Desktop>,
+        notifications: Arc<dyn Notifications>,
     ) -> (Owner, JoinHandle<()>) {
         let (tx, rx) = mpsc::unbounded_channel();
+        let hearing = tokio::spawn(hear(notifications.clone(), tx.clone()));
         let state = State {
             sessions: Sessions::new(),
             clock,
@@ -123,8 +131,14 @@ impl Owner {
             stops: Stops::new(),
             stop_waiters: Vec::new(),
             takeovers: TakeOvers::new(),
+            notices: Notices::new(),
+            notifications,
         };
-        (Owner { tx }, tokio::spawn(run(rx, state)))
+        let owner = tokio::spawn(async move {
+            run(rx, state).await;
+            hearing.abort();
+        });
+        (Owner { tx }, owner)
     }
 
     /// Opens a session for a new connection, which `connection` closes;
@@ -263,6 +277,19 @@ struct State {
     stop_waiters: Vec<stops::Waiter>,
     /// Which screen the user has taken over, and the calls that wait for it.
     takeovers: TakeOvers<SessionId>,
+    /// Each session's notice.
+    notices: Notices<SessionId, u32>,
+    notifications: Arc<dyn Notifications>,
+}
+
+/// Passes on what the notification service does, in order.
+async fn hear(notifications: Arc<dyn Notifications>, tx: mpsc::UnboundedSender<Msg>) {
+    loop {
+        let heard = notifications.heard().await;
+        if tx.send(Msg::Heard(heard)).is_err() {
+            return;
+        }
+    }
 }
 
 async fn run(mut rx: mpsc::UnboundedReceiver<Msg>, mut state: State) {
@@ -270,7 +297,10 @@ async fn run(mut rx: mpsc::UnboundedReceiver<Msg>, mut state: State) {
     while let Some(msg) = rx.recv().await {
         match msg {
             Msg::Connect(connection, reply) => state.connect(connection, reply),
-            Msg::Introduce(id, name) => state.introduce(id, name),
+            Msg::Introduce(id, name) => {
+                state.introduce(id, name);
+                state.notice_connect(id);
+            }
             Msg::Disconnect(id, reason) => state.event(id, Event::Disconnect, Some(reason)),
             Msg::ToolCall(id, reply) => state.tool_call(id, reply),
             Msg::Input(event, reply) => {
@@ -278,6 +308,7 @@ async fn run(mut rx: mpsc::UnboundedReceiver<Msg>, mut state: State) {
             }
             Msg::Dropped(id, call) => state.dropped(id, call),
             Msg::Screen(id, news) => state.news(id, news),
+            Msg::Heard(heard) => state.heard(heard),
             Msg::Watch(reply) => state.watch(reply),
             Msg::StopAll(reply) => state.stop_all(reply),
             Msg::ResumeAll(reply) => state.resume_all(reply),

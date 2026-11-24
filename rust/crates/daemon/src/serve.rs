@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use domain::EndReason;
-use ports::{Clock, Desktop, Screens};
+use ports::{Clock, Desktop, Notifications, Screens};
 use rmcp::ServiceExt;
 use rmcp::service::QuitReason;
 use tokio::net::UnixStream;
@@ -31,6 +31,7 @@ pub async fn run(
     screens: Arc<dyn Screens>,
     stop: CancellationToken,
     desktop: Arc<dyn Desktop>,
+    notifications: Arc<dyn Notifications>,
 ) -> Result<(), String> {
     let Listening {
         listener,
@@ -42,7 +43,7 @@ pub async fn run(
     let listener = into_tokio(listener)?;
     let control = into_tokio(control)?;
 
-    let (owner, owner_task) = Owner::spawn(clock, screens, desktop);
+    let (owner, owner_task) = Owner::spawn(clock, screens, desktop, notifications);
     let registry = Arc::new(Registry::builtin());
     let sessions = TaskTracker::new();
     let commands = tokio::spawn(control::serve(control, owner.clone()));
