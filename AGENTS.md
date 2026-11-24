@@ -37,10 +37,11 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace       # unit tests, black-box tests of the real binaries, structure checks
 ```
 
-CI runs all three on x86-64 and ARM64.
+CI runs all three on x86-64 and ARM64. They need Linux, with pixman and libxkbcommon for the agent's screen (Debian and Ubuntu: `libpixman-1-dev libxkbcommon-dev`; Arch: `pixman libxkbcommon`).
 
 - **Adding a tool** is one file, one registry line and its test: write `rust/crates/tools/src/<name>.rs`, add `mod <name>;` to `rust/crates/tools/src/lib.rs` and `&<name>::<Tool>,` to `TOOLS` in `rust/crates/tools/src/registry.rs`. Tools are called only through `Registry::call`, the one guard; checks every call needs go there, not in the tool.
 - **`domain` stays pure:** no I/O, no async, no clock reads, no other workspace crate. Code that needs the outside world goes in `adapters`, behind a trait in `ports`.
 - **No unsafe code, and no `unwrap`, `expect` or `panic` outside tests.** Lint attributes that switch these off fail the build.
 - **Every stateful part needs a TLA+ spec in `specs/`** that fails first on a real past bug.
-- **Black-box tests** start the real daemon and shim with `rust/tests/support`, which gives each test its own runtime dir and a cleared environment. Never point a test at the real desktop or the real `$XDG_RUNTIME_DIR`.
+- **The agent's screen** is `rust/crates/screen`: the compositor binary, `hypr-computer-screen`, in `src/compositor/`, and the daemon's handle on it, which implements the `Screen` traits in `ports`. The daemon reaches a screen only through those traits. It runs the screen found next to its own binary, or `$HYPR_COMPUTER_SCREEN`.
+- **Black-box tests** start the real daemon, shim and screen with `rust/tests/support`, which gives each test its own runtime dir and a cleared environment. `support::app` is a tiny Wayland app to put on a screen. Never point a test at the real desktop or the real `$XDG_RUNTIME_DIR`.
