@@ -18,7 +18,7 @@ use tracing::{info, warn};
 use crate::control;
 use crate::listen::Listening;
 use crate::mcp::SessionServer;
-use crate::owner::Owner;
+use crate::owner::{NOTICES_GRACE, Owner};
 
 /// How long sessions get to wind down once the daemon is told to stop.
 const STOP_GRACE: Duration = Duration::from_secs(5);
@@ -85,7 +85,11 @@ pub async fn run(
     // The owner ends once every session's screen is torn down.
     owner.stop();
     drop(owner);
-    if tokio::time::timeout(STOP_GRACE, owner_task).await.is_err() {
+    // The owner tears the screens down, then replaces the notices.
+    if tokio::time::timeout(STOP_GRACE.saturating_add(NOTICES_GRACE), owner_task)
+        .await
+        .is_err()
+    {
         warn!(
             "screens still being torn down after {}s; stopping anyway",
             STOP_GRACE.as_secs()

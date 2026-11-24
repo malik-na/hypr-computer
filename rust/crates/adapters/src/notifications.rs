@@ -16,10 +16,10 @@ use std::time::Duration;
 use domain::SessionId;
 use futures_util::StreamExt;
 use ports::{BoxFuture, Heard, Notification, Notifications};
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{Mutex, mpsc, oneshot};
 use tracing::warn;
 use zbus::Variant;
-use zbus::message::Type;
+use zbus::message::{Flags, Type};
 use zbus::{Connection, Message, MessageStream};
 
 const NAME: &str = "org.freedesktop.Notifications";
@@ -69,6 +69,9 @@ pub fn notifications(bus: Option<String>) -> Arc<dyn Notifications> {
 
 enum Request {
     Show(SessionId, Notification),
+    Send(Notification),
+    /// Answered once every request before it is sent.
+    Flush(oneshot::Sender<()>),
 }
 
 struct DBusNotifications {
@@ -80,6 +83,18 @@ impl Notifications for DBusNotifications {
     fn show(&self, session: SessionId, notification: Notification) {
         // Fails only once the runtime is shutting down.
         let _ = self.requests.send(Request::Show(session, notification));
+    }
+
+    fn send(&self, notification: Notification) {
+        let _ = self.requests.send(Request::Send(notification));
+    }
+
+    fn flush(&self) -> BoxFuture<'_, ()> {
+        let (done, flushed) = oneshot::channel();
+        let _ = self.requests.send(Request::Flush(done));
+        Box::pin(async {
+            let _ = flushed.await;
+        })
     }
 
     fn heard(&self) -> BoxFuture<'_, Heard> {
@@ -120,7 +135,7 @@ async fn serve(
             request = requests.recv() => match request {
                 None => return,
                 Some(Request::Show(session, notification)) => {
-                    match send(&connection, &notification).await {
+                    match send(&connection, &notification, true).await {
                         Ok(serial) => {
                             waiting.insert(serial, session);
                         }
@@ -128,6 +143,14 @@ async fn serve(
                             let _ = heard.send(Heard::Failed(session, why));
                         }
                     }
+                }
+                Some(Request::Send(notification)) => {
+                    if let Err(why) = send(&connection, &notification, false).await {
+                        warn!("a notification wasn't shown: {why}");
+                    }
+                }
+                Some(Request::Flush(done)) => {
+                    let _ = done.send(());
                 }
             },
             message = stream.next() => match message {
@@ -161,6 +184,10 @@ async fn refuse(
             Request::Show(session, _) => {
                 let _ = heard.send(Heard::Failed(session, why.clone()));
             }
+            Request::Send(_) => {}
+            Request::Flush(done) => {
+                let _ = done.send(());
+            }
         }
     }
 }
@@ -182,8 +209,13 @@ async fn connect(address: &str) -> Result<(Connection, MessageStream), String> {
     }
 }
 
-/// Sends a `Notify` call, and returns its serial.
-async fn send(connection: &Connection, n: &Notification) -> Result<NonZeroU32, String> {
+/// Sends a `Notify` call, and returns its serial. Without `answer`, the
+/// service is told not to answer it.
+async fn send(
+    connection: &Connection,
+    n: &Notification,
+    answer: bool,
+) -> Result<NonZeroU32, String> {
     let actions: Vec<&str> = n
         .actions
         .iter()
@@ -206,7 +238,13 @@ async fn send(connection: &Connection, n: &Notification) -> Result<NonZeroU32, S
         hints,
         expire,
     );
+    let flags = if answer {
+        Flags::empty()
+    } else {
+        Flags::NO_REPLY_EXPECTED
+    };
     let message = Message::method_call(PATH, "Notify")
+        .with_flags(flags)
         .destination(NAME)
         .interface(INTERFACE)
         .build(&body)
