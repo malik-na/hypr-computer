@@ -101,3 +101,69 @@ fn the_users_own_new_windows_still_open_where_the_user_is() {
     assert_eq!(shown, USER_WORKSPACE);
     assert_eq!(focused.as_deref(), Some(mine.address.as_str()));
 }
+
+/// The user is already watching workspace 10 when another agent starts.
+#[test]
+fn a_new_view_doesnt_take_the_focus_of_a_user_already_on_workspace_10() {
+    let desk = Desktop::new();
+    let daemon = desk.start_daemon();
+    let _a = desk.agent("first-agent");
+    let first = desk.wait_for_views(1, &daemon).remove(0).address.unwrap();
+    desk.hypr.user_shows_workspace(VIEWS_WORKSPACE);
+    let focused = desk.hypr.world().focused.clone();
+    assert_eq!(focused.as_deref(), Some(first.as_str()));
+
+    let _b = desk.agent("second-agent");
+    desk.wait_for_views(2, &daemon);
+    thread::sleep(Duration::from_secs(1));
+    let (shown, now) = {
+        let w = desk.hypr.world();
+        (w.shown_workspace.clone(), w.focused.clone())
+    };
+    assert_eq!(shown, VIEWS_WORKSPACE, "{}", desk.report(&daemon));
+    assert_eq!(
+        now,
+        focused,
+        "the new view took the focus\n{}",
+        desk.report(&daemon)
+    );
+}
+
+/// After Hyprland restarts, the session's environment can name an instance
+/// that is gone: the daemon can't tell Hyprland where a view goes, and a view
+/// opened anyway would land on the user's workspace and take focus.
+#[test]
+fn no_view_opens_where_hyprland_cant_be_told_to_place_it_and_the_session_still_works() {
+    let desk = Desktop::new();
+    let mut cmd = desk.command(&support::daemon_bin());
+    cmd.env("HYPRLAND_INSTANCE_SIGNATURE", "an-instance-that-is-gone");
+    let daemon = support::Daemon::spawn(&desk.env, cmd, "daemon.log");
+    let mut agent = desk.agent("placement-agent");
+    let _app = Probe::paint(&desk.screen(1), [GREY; 4], "agent.app");
+    assert_eq!(agent.screenshot().pixel(640, 400), GREY);
+    thread::sleep(Duration::from_secs(1));
+
+    let (shown, focused, windows) = {
+        let w = desk.hypr.world();
+        (
+            w.shown_workspace.clone(),
+            w.focused.clone(),
+            w.windows.clone(),
+        )
+    };
+    assert!(
+        !windows
+            .iter()
+            .any(|w| w.workspace == USER_WORKSPACE && w.address != USER_WINDOW),
+        "a view opened on the user's workspace\n{}",
+        desk.report(&daemon)
+    );
+    assert_eq!(shown, USER_WORKSPACE);
+    assert_eq!(
+        focused.as_deref(),
+        Some(USER_WINDOW),
+        "{}",
+        desk.report(&daemon)
+    );
+    assert_eq!(agent.screenshot().width, 1280);
+}
