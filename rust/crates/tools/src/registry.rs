@@ -91,6 +91,8 @@ pub struct Call<'a> {
     /// doesn't exist, whose arguments nothing vouches for.
     pub arguments: Option<Map<String, Value>>,
     pub result: Outcome,
+    /// The picture the agent got, if the call gave it one.
+    pub picture: Option<Png>,
 }
 
 /// How a call ended, as the action log says it.
@@ -211,6 +213,7 @@ impl Registry {
                 tool: name,
                 arguments: tool.map(|t| t.logged(&args)),
                 result: Outcome::Error,
+                picture: None,
             },
         };
         let (answer, result) = match tool {
@@ -221,6 +224,13 @@ impl Registry {
             ),
         };
         record.call.result = result;
+        record.call.picture = match &answer {
+            Ok(output) if result == Outcome::Ok => output.content.iter().find_map(|c| match c {
+                Content::Image(png) => Some(png.clone()),
+                Content::Text(_) => None,
+            }),
+            _ => None,
+        };
         answer
     }
 }
