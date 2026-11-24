@@ -104,10 +104,13 @@ fn an_app_and_everything_it_started_end_with_the_session() {
     let mut agent = agent(&env);
     let log = Log::new(&env);
     let started = env.path("started.pid");
-    // The app starts a helper that would outlive the screen on its own.
+    let detached = env.path("detached.pid");
+    // The app starts a helper that would outlive the screen on its own, and
+    // one that leaves its process group and session, as a daemon does.
     let script = format!(
-        "sleep 60 & echo $! > '{}'; exec '{}' {}",
+        "sleep 60 & echo $! > '{}'; setsid sleep 61 & echo $! > '{}'; exec '{}' {}",
         started.display(),
+        detached.display(),
         app::program().display(),
         app::args(RED, BLUE, &log).join(" ")
     );
@@ -119,12 +122,21 @@ fn an_app_and_everything_it_started_end_with_the_session() {
         .trim()
         .parse()
         .unwrap();
-    assert!(alive(app) && alive(helper));
+    let detached: u32 = fs::read_to_string(&detached)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    assert!(alive(app) && alive(helper) && alive(detached));
 
     agent.kill();
     daemon.wait_for_log("session 1 ended");
     assert!(!alive(app), "the app outlived its session");
     assert!(!alive(helper), "what the app started outlived its session");
+    assert!(
+        !alive(detached),
+        "what the app detached outlived its session"
+    );
 }
 
 #[test]
