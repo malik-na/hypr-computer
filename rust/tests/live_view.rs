@@ -190,7 +190,7 @@ fn the_view_opens_on_workspace_10_only_once_hyprland_will_keep_it_out_of_the_use
     let mut shim = Shim::start(&env);
     shim.initialize();
 
-    assert_eq!(desktop.hyprland.wait_for_requests(1), [PLACE_VIEWS]);
+    assert_eq!(desktop.hyprland.wait_for_view_requests(1), [PLACE_VIEWS]);
     thread::sleep(Duration::from_millis(300));
     assert_eq!(
         desktop.views(),
@@ -201,7 +201,7 @@ fn the_view_opens_on_workspace_10_only_once_hyprland_will_keep_it_out_of_the_use
     desktop.hyprland.release();
     desktop.wait_for_views(1);
     // Nothing else: the user's workspace and focus are left alone.
-    assert_eq!(desktop.hyprland.requests(), [PLACE_VIEWS]);
+    assert_eq!(desktop.hyprland.view_requests(), [PLACE_VIEWS]);
 }
 
 #[test]
@@ -352,7 +352,7 @@ fn hypr_computer_watch_takes_the_user_to_the_views_and_says_whose_they_are() {
     // One rule per view as it opened, the rule again as watch reopens any
     // view the desktop lost, then the switch to workspace 10.
     assert_eq!(
-        desktop.hyprland.requests(),
+        desktop.hyprland.view_requests(),
         [PLACE_VIEWS, PLACE_VIEWS, PLACE_VIEWS, SHOW_VIEWS]
     );
 }

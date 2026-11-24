@@ -74,6 +74,30 @@ impl Hyprland {
         self.requests.lock().unwrap().clone()
     }
 
+    // The daemon's notice fallback (#29) also talks to Hyprland, with `/notify` requests.
+    /// Every request it got except the `/notify` ones, oldest first.
+    pub fn view_requests(&self) -> Vec<String> {
+        let mut requests = self.requests();
+        requests.retain(|request| !request.starts_with("/notify "));
+        requests
+    }
+
+    /// Waits until it has had `n` requests other than `/notify` ones, and returns them all.
+    pub fn wait_for_view_requests(&self, n: usize) -> Vec<String> {
+        let end = Instant::now() + TIMEOUT;
+        loop {
+            let requests = self.view_requests();
+            if requests.len() >= n {
+                return requests;
+            }
+            assert!(
+                Instant::now() < end,
+                "wanted {n} view requests to Hyprland, got {requests:?}"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
     /// Waits until it has had `n` requests, and returns them all.
     pub fn wait_for_requests(&self, n: usize) -> Vec<String> {
         let end = Instant::now() + TIMEOUT;
