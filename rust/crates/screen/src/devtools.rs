@@ -40,7 +40,7 @@ type Waiting = HashMap<u64, oneshot::Sender<Result<Value, String>>>;
 
 /// The daemon's end of a browser's DevTools pipe.
 pub(crate) struct DevTools {
-    to: tokio::sync::Mutex<pipe::Sender>,
+    to: Arc<tokio::sync::Mutex<pipe::Sender>>,
     waiting: Arc<Mutex<Option<Waiting>>>,
     events: broadcast::Sender<Event>,
     next_id: AtomicU64,
@@ -66,7 +66,7 @@ impl DevTools {
         tokio::spawn(read(from, waiting.clone(), events.clone()));
         Ok((
             DevTools {
-                to: tokio::sync::Mutex::new(to),
+                to: Arc::new(tokio::sync::Mutex::new(to)),
                 waiting,
                 events,
                 next_id: AtomicU64::new(1),
@@ -96,6 +96,25 @@ impl DevTools {
         params: Value,
         session: Option<&str>,
     ) -> Result<Value, ScreenError> {
+        self.call_within(ANSWER_TIME, method, params, session)
+            .await?
+            .ok_or_else(|| {
+                ScreenError(format!(
+                    "the browser didn't answer {method} within {}s",
+                    ANSWER_TIME.as_secs()
+                ))
+            })
+    }
+
+    /// As [`Self::call`], waiting at most `limit` for the answer: `None` if
+    /// it didn't come by then.
+    pub(crate) async fn call_within(
+        &self,
+        limit: Duration,
+        method: &str,
+        params: Value,
+        session: Option<&str>,
+    ) -> Result<Option<Value>, ScreenError> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let mut message = json!({"id": id, "method": method, "params": params});
         if let Some(session) = session {
@@ -106,33 +125,44 @@ impl DevTools {
             Ok(Some(waiting)) => waiting.insert(id, answer),
             _ => return Err(gone()),
         };
+        // However this call ends, even dropped by its caller, nothing waits
+        // for the answer any more.
+        let _unwait = Unwait {
+            waiting: self.waiting.clone(),
+            id,
+        };
         let mut bytes = message.to_string().into_bytes();
         bytes.push(0);
-        let sent = async {
-            let mut to = self.to.lock().await;
+        // Written whole on a task of its own, even if this call is dropped:
+        // half a message would garble every one after it.
+        let to = self.to.clone();
+        let sent = tokio::spawn(async move {
+            let mut to = to.lock().await;
             to.write_all(&bytes).await?;
             to.flush().await
-        };
-        let unwait = || {
-            if let Ok(Some(waiting)) = self.waiting.lock().as_deref_mut() {
-                waiting.remove(&id);
-            }
-        };
-        if sent.await.is_err() {
-            unwait();
+        });
+        if !matches!(sent.await, Ok(Ok(()))) {
             return Err(gone());
         }
-        match timeout(ANSWER_TIME, answered).await {
-            Ok(Ok(Ok(result))) => Ok(result),
+        match timeout(limit, answered).await {
+            Ok(Ok(Ok(result))) => Ok(Some(result)),
             Ok(Ok(Err(why))) => Err(ScreenError(format!("the browser refused {method}: {why}"))),
             Ok(Err(_)) => Err(gone()),
-            Err(_) => {
-                unwait();
-                Err(ScreenError(format!(
-                    "the browser didn't answer {method} within {}s",
-                    ANSWER_TIME.as_secs()
-                )))
-            }
+            Err(_) => Ok(None),
+        }
+    }
+}
+
+/// Stops waiting for the answer to call `id`.
+struct Unwait {
+    waiting: Arc<Mutex<Option<Waiting>>>,
+    id: u64,
+}
+
+impl Drop for Unwait {
+    fn drop(&mut self) {
+        if let Ok(Some(waiting)) = self.waiting.lock().as_deref_mut() {
+            waiting.remove(&self.id);
         }
     }
 }

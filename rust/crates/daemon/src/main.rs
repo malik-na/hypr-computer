@@ -87,7 +87,9 @@ fn main() -> ExitCode {
         program,
         listening.dir.clone(),
         desktop.clone(),
-        std::env::var_os("HYPR_COMPUTER_BROWSER").map(PathBuf::from),
+        std::env::var_os("HYPR_COMPUTER_BROWSER")
+            .filter(|b| !b.is_empty())
+            .map(PathBuf::from),
     ));
     let desktop = adapters::desktop(
         desktop.as_deref(),
