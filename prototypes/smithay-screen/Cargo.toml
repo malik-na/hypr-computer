@@ -1,0 +1,38 @@
+[package]
+name = "hc-screen-proto"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Throwaway prototype: a headless Smithay compositor as the agent's screen"
+
+[[bin]]
+name = "hc-screen"
+path = "src/main.rs"
+
+[[bin]]
+name = "hc-view"
+path = "src/bin/hc_view.rs"
+
+[dependencies]
+libc = "0.2"
+memmap2 = "0.9"
+png = "0.17"
+serde_json = "1"
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client"] }
+
+[dependencies.smithay]
+version = "0.7.0"
+default-features = false
+features = [
+    "wayland_frontend",
+    "desktop",
+    "renderer_gl",
+    "renderer_pixman",
+    "backend_egl",
+    "backend_gbm",
+    "backend_drm",
+]
+
+[profile.release]
+debug = 1
