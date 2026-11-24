@@ -43,4 +43,8 @@ impl Desktop for Unsupported {
     fn show_views(&self) -> BoxFuture<'_, Result<String, DesktopError>> {
         Box::pin(async { Err(DesktopError(self.0.clone())) })
     }
+
+    fn notify(&self, _message: String) -> BoxFuture<'_, Result<(), DesktopError>> {
+        Box::pin(async { Err(DesktopError(self.0.clone())) })
+    }
 }

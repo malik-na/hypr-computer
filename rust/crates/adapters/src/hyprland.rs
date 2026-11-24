@@ -11,6 +11,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
 use tokio::time::timeout;
 
+/// How long Hyprland's own notice stays, in milliseconds.
+const NOTICE_MS: u32 = 8000;
+
 /// How long Hyprland may take to answer.
 const ANSWER_TIME: Duration = Duration::from_secs(5);
 
@@ -91,5 +94,11 @@ impl Desktop for Hyprland {
             .await?;
             Ok(format!("workspace {WORKSPACE}"))
         })
+    }
+
+    fn notify(&self, message: String) -> BoxFuture<'_, Result<(), DesktopError>> {
+        // Icon 1 (info), the theme's colour; the rest of the line is the text.
+        let message = message.replace('\n', " ");
+        Box::pin(self.ask(format!("/notify 1 {NOTICE_MS} 0 {message}")))
     }
 }

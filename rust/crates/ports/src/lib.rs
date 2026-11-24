@@ -264,6 +264,9 @@ pub trait Desktop: Send + Sync {
     /// Takes the user to the views. Returns where they are, in words for
     /// the user, such as "workspace 10".
     fn show_views(&self) -> BoxFuture<'_, Result<String, DesktopError>>;
+    /// Shows `message` in the desktop's own notice, which goes away by
+    /// itself: for when the notification service can't show one.
+    fn notify(&self, message: String) -> BoxFuture<'_, Result<(), DesktopError>>;
 }
 
 /// Starts screens: one per session.
