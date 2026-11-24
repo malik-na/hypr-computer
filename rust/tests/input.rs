@@ -175,3 +175,19 @@ fn typed_text_arrives_in_order_and_the_next_screenshot_shows_it() {
         .collect();
     type_text(&mut agent, &log, &long);
 }
+
+#[test]
+fn any_text_arrives_in_order_non_ascii_included() {
+    let env = Env::new();
+    let _daemon = Daemon::start(&env);
+    let (mut agent, log) = agent_with_app(&env);
+
+    type_text(&mut agent, &log, "Grüße, naïve café: 世界 🙂 Ωμέγα ½ €5\n");
+    // More different characters than one keymap has room for, between
+    // characters a US keyboard has.
+    let many: String = (0x4e00..0x4e00 + 300)
+        .filter_map(char::from_u32)
+        .flat_map(|c| [c, 'a'])
+        .collect();
+    type_text(&mut agent, &log, &many);
+}
