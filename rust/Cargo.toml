@@ -3,7 +3,7 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/domain", "crates/ports", "crates/adapters", "crates/tools", "crates/daemon",
+    "crates/domain", "crates/ports", "crates/adapters", "crates/tools", "crates/daemon", "crates/shim",
     
     
     
