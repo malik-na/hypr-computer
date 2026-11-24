@@ -1,0 +1,18 @@
+[package]
+name = "tools"
+description = "hypr-computer's MCP tools: one file per tool, one registry, one guard."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+domain.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true }
+
+[lints]
+workspace = true

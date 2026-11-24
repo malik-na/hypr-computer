@@ -26,3 +26,21 @@ scripts/release.sh patch                                          # release a fi
 
 - Test the installer safely with `bash install.sh --dry-run`.
 - Release with `scripts/release.sh patch` (fixes) or `minor` (features). Never tag by hand.
+
+## Rust rewrite
+
+The rewrite lives in [`rust/`](rust), a Cargo workspace; [docs/design.md](docs/design.md) has the design. Run the checks from `rust/`:
+
+```bash
+cargo fmt --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace       # unit tests, black-box tests of the real binaries, structure checks
+```
+
+CI runs all three on x86-64 and ARM64.
+
+- **Adding a tool** is one file, one registry line and its test: write `rust/crates/tools/src/<name>.rs`, add `mod <name>;` to `rust/crates/tools/src/lib.rs` and `&<name>::<Tool>,` to `TOOLS` in `rust/crates/tools/src/registry.rs`. Tools are called only through `Registry::call`, the one guard; checks every call needs go there, not in the tool.
+- **`domain` stays pure:** no I/O, no async, no clock reads, no other workspace crate. Code that needs the outside world goes in `adapters`, behind a trait in `ports`.
+- **No unsafe code, and no `unwrap`, `expect` or `panic` outside tests.** Lint attributes that switch these off fail the build.
+- **Every stateful part needs a TLA+ spec in `specs/`** that fails first on a real past bug.
+- **Black-box tests** start the real daemon and shim with `rust/tests/support`, which gives each test its own runtime dir and a cleared environment. Never point a test at the real desktop or the real `$XDG_RUNTIME_DIR`.
