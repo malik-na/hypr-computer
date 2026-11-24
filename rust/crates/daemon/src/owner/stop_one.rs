@@ -52,7 +52,7 @@ impl State {
     }
 
     /// The sessions `agent` names, or why there are none.
-    fn pick(&self, agent: &str) -> Result<Vec<SessionId>, String> {
+    pub(super) fn pick(&self, agent: &str) -> Result<Vec<SessionId>, String> {
         let number = agent.parse::<u64>().ok();
         // The name as its view shows it: `title` tidies both alike.
         let named = |id, name: &str| title(name, id) == title(agent, id);
@@ -75,7 +75,7 @@ impl State {
     }
 
     /// "alpha (session 1) and beta (session 2)".
-    fn titles(&self, ids: &[SessionId]) -> String {
+    pub(super) fn titles(&self, ids: &[SessionId]) -> String {
         let titles: Vec<String> = self
             .sessions
             .iter()

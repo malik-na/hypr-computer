@@ -24,6 +24,7 @@ use tracing::info;
 mod pass;
 mod stop_one;
 mod stops;
+mod take;
 mod takeover;
 mod views;
 
@@ -57,6 +58,8 @@ enum Msg {
     User(SessionId, UserInput),
     /// `hypr-computer give`.
     Give(oneshot::Sender<Reply>),
+    /// `hypr-computer take <agent>`.
+    Take(String, oneshot::Sender<Reply>),
     Stop,
 }
 
@@ -171,6 +174,12 @@ impl Owner {
         self.ask(Msg::Give).await
     }
 
+    /// `hypr-computer take <agent>`: takes over that agent's screen. `None`
+    /// only if the owner has stopped.
+    pub async fn take(&self, agent: String) -> Option<Reply> {
+        self.ask(|reply| Msg::Take(agent, reply)).await
+    }
+
     async fn ask(&self, msg: impl FnOnce(oneshot::Sender<Reply>) -> Msg) -> Option<Reply> {
         let (reply, answer) = oneshot::channel();
         self.tx.send(msg(reply)).ok()?;
@@ -276,6 +285,7 @@ async fn run(mut rx: mpsc::UnboundedReceiver<Msg>, mut state: State) {
             Msg::ResumeOne(agent, reply) => state.resume_one(&agent, reply),
             Msg::User(id, input) => state.user_input(id, input),
             Msg::Give(reply) => state.give(reply),
+            Msg::Take(agent, reply) => state.take(&agent, reply),
             Msg::Stop => stopping = true,
         }
         if stopping && state.sessions.open_count() == 0 {
