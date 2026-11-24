@@ -6,7 +6,7 @@ use std::sync::Arc;
 use ports::{BoxFuture, Png, Screen};
 use serde_json::{Map, Value};
 
-use crate::{click, launch_app, r#move, screenshot};
+use crate::{click, launch_app, r#move, screenshot, r#type};
 
 /// Every tool, one line each: `&screenshot::Screenshot,`. A tool's file is
 /// `src/<name>.rs` and its `mod` line is in `lib.rs`.
@@ -15,6 +15,7 @@ const TOOLS: &[&dyn Tool] = &[
     &launch_app::LaunchApp,
     &click::Click,
     &r#move::Move,
+    &r#type::Type,
 ];
 
 /// One MCP tool. Private to this crate: callers go through [`Registry::call`].
