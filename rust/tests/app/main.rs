@@ -23,6 +23,7 @@ use wayland_client::globals::registry_queue_init;
 use wayland_client::protocol::wl_seat;
 use wayland_client::{Connection, QueueHandle};
 
+use crate::keyboard::Keyboard;
 use crate::log::Log;
 use crate::pointer::Pointer;
 use crate::window::Window;
@@ -42,6 +43,7 @@ pub struct App {
     /// What the screen's seat offers.
     pub seat: Vec<&'static str>,
     pub pointer: Pointer,
+    pub keyboard: Keyboard,
 }
 
 impl App {
@@ -103,6 +105,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         inputs: 0,
         seat: Vec::new(),
         pointer: Pointer::default(),
+        keyboard: Keyboard::default(),
     };
     // Optional: with no seat, the app just shows its colours. Like most apps,
     // it takes the keyboard and pointer before it opens its window.
