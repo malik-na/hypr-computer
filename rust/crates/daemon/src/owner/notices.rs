@@ -1,13 +1,16 @@
 //! The notice that tells the user an agent is at work (`domain::notice`,
 //! specs/Notice.tla): one desktop notification per session, once its agent
-//! has said its name, naming it as its live view does. When the session
-//! ends, a short-lived "done" takes its place: closing it wouldn't do, as
-//! Omarchy's shell keeps a notification its sender closed on screen.
+//! has said its name, naming it as its live view does. OK on it lets the
+//! agent go on; Stop stops that agent, as `hypr-computer stop <agent>` does.
+//! When the session ends, a short-lived "done" takes its place: closing it
+//! wouldn't do, as Omarchy's shell keeps a notification its sender closed on
+//! screen.
 
 use std::collections::BTreeMap;
 
 use domain::SessionId;
-use domain::notice::{Effect, Event, Notice};
+use domain::notice::{Answer, Effect, Event, Notice};
+use domain::stop;
 use domain::view::title;
 use ports::{Heard, Notification};
 use tracing::{info, warn};
@@ -51,6 +54,29 @@ impl State {
                 warn!("{id}: no notice: {why}");
                 Event::Failed(id)
             }
+            Heard::Action(note, key) => match key.as_str() {
+                "ok" => Event::Answer(note, Answer::Ok),
+                "stop" => Event::Answer(note, Answer::Stop),
+                _ => return,
+            },
+            Heard::Closed(note) => Event::Answer(note, Answer::Closed),
+            Heard::Gone => {
+                // Its notices went with it, and a new one reuses their ids:
+                // they must never be taken for its own.
+                warn!("the notification service went away, and the agents' notices with it");
+                let shown: Vec<u32> = self
+                    .labels
+                    .keys()
+                    .filter_map(|&id| match self.notices.get(id) {
+                        Some(Notice::Shown(note)) => Some(note),
+                        _ => None,
+                    })
+                    .collect();
+                for note in shown {
+                    self.notice_step(Event::Answer(note, Answer::Closed));
+                }
+                return;
+            }
         };
         self.notice_step(event);
     }
@@ -74,7 +100,13 @@ impl State {
                     info!("{id}: notice replaced by \"done\"");
                     self.notifications.send(done(self.label(id), note));
                 }
-                Effect::Host(_) | Effect::Stop(_) => {}
+                Effect::Stop(id) => {
+                    // As `hypr-computer stop <agent>` does.
+                    info!("Stopped {} from its notice.", self.label(id));
+                    self.stops.step(stop::Event::Stop(id));
+                    self.after_stop_step();
+                }
+                Effect::Host(_) => {}
             }
         }
         let notices = &self.notices;

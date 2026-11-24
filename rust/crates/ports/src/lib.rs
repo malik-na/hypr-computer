@@ -293,6 +293,14 @@ pub enum Heard {
     Shown(SessionId, u32),
     /// It didn't, and why: no session bus, no service on it, or an error.
     Failed(SessionId, String),
+    /// The user pressed the button with this key on notification `id`,
+    /// whichever app's it is.
+    Action(u32, String),
+    /// Notification `id` was closed, whichever app's it is.
+    Closed(u32),
+    /// The service went away, and every notification it showed with it: a
+    /// new one starts its ids again.
+    Gone,
 }
 
 /// The desktop's notification service. Nothing here waits for it: what it
