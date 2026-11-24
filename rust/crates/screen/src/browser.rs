@@ -26,6 +26,8 @@ use serde_json::{Value, json};
 use tokio::sync::broadcast::error::RecvError;
 use tokio::time::{Instant, timeout, timeout_at};
 
+use domain::limits::BROWSER;
+
 use crate::devtools::{CLOSED, DevTools, Event};
 use crate::process::ScreenChild;
 
@@ -195,7 +197,7 @@ impl ScreenChild {
             ])
             .map_err(|e| ScreenError(format!("can't hand the browser its pipe: {e}")))?;
         let before = self.status().await?.windows;
-        match self.run_app(command).await {
+        match self.run_app(command, BROWSER).await {
             Ok(launched @ (Launched::Window { .. } | Launched::NoWindow { .. })) => Ok(Browser {
                 devtools,
                 tab: None,

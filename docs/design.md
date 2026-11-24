@@ -27,6 +27,15 @@ hypr-computer is being rewritten in Rust with a new architecture. The Python ser
 - A stop and a notification per agent, plus stop-all.
 - Every action is logged. Screenshots in the log are opt-in.
 
+### Limits
+
+`hypr-computer allow` sets the limits every agent works within (`domain::limits`, specs/Limits.tla). Each `allow` replaces the limits before it; `--for 30m` ends them after that long, and then nothing is limited; `--off` ends them at once; `--list` shows them.
+
+- **Allowed apps.** `allow notes,foot browser` lets agents launch only those programs (by file name, any case) and give input only while a window of one of them is in front: one made by the process `launch_app` started, or by one of its children. `browser` is the one `open_url` starts.
+- **Where they live.** The limits are a file in the runtime dir, next to the daemon's socket, which the command writes and the daemon reads at every check. So a limit set mid-session applies to every agent's next call, `allow` works while no daemon runs, and a restart of the daemon doesn't lift them. A file the daemon can't read or trust counts as read-only, with no app or site allowed.
+- **The guard checks them.** Each tool says what it does (`Tool::effect`: look, input, launch, open), and the guard asks the limits at every call, after the session has let the call through. A refused call is a tool error that says what was refused and tells the agent to ask the user.
+- **Not a sandbox.** Agents' apps run as the user. A program on the screen, or an agent with a shell of its own, can change the limits file or run `hypr-computer allow` itself.
+
 ## Process
 
 - Tools are redesigned from benchmark evidence, starting from the shape of Anthropic's computer-use tool.

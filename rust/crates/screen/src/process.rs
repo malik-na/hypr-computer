@@ -22,6 +22,7 @@ use tokio::time::timeout;
 use tracing::warn;
 
 use crate::SIZE;
+use crate::apps::Apps;
 use crate::browser::Browser;
 use crate::protocol::{READY, Reply, Request, Status, USER_SOCKET};
 use crate::settle::parts;
@@ -114,6 +115,7 @@ impl Screens for ScreenProcesses {
             browser: Mutex::new(None),
             has_view: self.desktop.is_some(),
             user: OnceLock::new(),
+            apps: Apps::default(),
         }))
     }
 }
@@ -146,6 +148,8 @@ pub(crate) struct ScreenChild {
     has_view: bool,
     /// The user's input in the live view, from when the screen is up.
     user: OnceLock<UserLink>,
+    /// The apps started on it, for the user's app limits.
+    pub(crate) apps: Apps,
 }
 
 pub(crate) struct Pipe {
@@ -368,6 +372,10 @@ impl Screen for ScreenChild {
 
     fn open_page(&self, page: WebPage) -> BoxFuture<'_, Result<OpenedPage, ScreenError>> {
         Box::pin(self.open_web_page(page))
+    }
+
+    fn front_app(&self) -> BoxFuture<'_, Option<String>> {
+        Box::pin(async move { self.apps.of(self.status().await.ok()?.front?) })
     }
 }
 

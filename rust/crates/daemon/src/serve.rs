@@ -16,6 +16,7 @@ use tools::Registry;
 use tracing::{info, warn};
 
 use crate::control;
+use crate::limits::LimitsFile;
 use crate::listen::Listening;
 use crate::mcp::SessionServer;
 use crate::owner::Owner;
@@ -31,6 +32,7 @@ pub async fn run(
     screens: Arc<dyn Screens>,
     stop: CancellationToken,
     desktop: Arc<dyn Desktop>,
+    limits: Arc<LimitsFile>,
 ) -> Result<(), String> {
     let Listening {
         listener,
@@ -42,7 +44,7 @@ pub async fn run(
     let listener = into_tokio(listener)?;
     let control = into_tokio(control)?;
 
-    let (owner, owner_task) = Owner::spawn(clock, screens, desktop);
+    let (owner, owner_task) = Owner::spawn(clock, screens, desktop, limits);
     let registry = Arc::new(Registry::builtin());
     let sessions = TaskTracker::new();
     let commands = tokio::spawn(control::serve(control, owner.clone()));

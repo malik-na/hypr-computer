@@ -1,7 +1,10 @@
 //! hypr-computer: the user's commands. The daemon owns every agent's
 //! session, so each command asks it, on its control socket, and prints the
-//! answer. Without a daemon, no agent is working.
+//! answer. Without a daemon, no agent is working. `allow` is the exception:
+//! the limits are a file the daemon reads (`allow.rs`).
 #![forbid(unsafe_code)]
+
+mod allow;
 
 use std::io::{self, BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
@@ -23,10 +26,27 @@ const USAGE: &str = "usage: hypr-computer <command>
   stop <agent>     stop the agents of that name, or that session number
   resume <agent>   let them go on
   take <agent>     take over that agent's screen: your pointer and keys go to it
-  give             hand back the agent's screen you took over";
+  give             hand back the agent's screen you took over
+
+  allow APP[,APP...]... [--sites SITE[,SITE...]] [--for DURATION]
+                   let every agent use only these apps (`browser` is the one
+                   open_url starts), and its browser only these sites
+  allow --sites SITE[,SITE...] [--for DURATION]
+  allow --read-only [--for DURATION]
+                   let every agent only look at its screen
+  allow [--list]   show the limits in force
+  allow --off      lift every limit
+
+  Each allow replaces the limits before it. --for (30m, 2h, 1h30m) ends
+  them after that long. Password managers are never allowed.";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if let [word, rest @ ..] = args.as_slice()
+        && word == "allow"
+    {
+        return allow::run(rest, USAGE);
+    }
     let command = match args.as_slice() {
         [help] if ["help", "-h", "--help"].contains(&help.as_str()) => {
             println!("{USAGE}");

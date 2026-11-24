@@ -6,6 +6,7 @@
 //! stdin and stdout, in the format in [`protocol`].
 #![forbid(unsafe_code)]
 
+mod apps;
 mod browser;
 mod devtools;
 mod launch;

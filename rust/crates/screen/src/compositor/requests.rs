@@ -70,6 +70,7 @@ pub fn answer(state: &mut State, request: Incoming, out: &mut impl Write) -> io:
                 commits: state.commits,
                 idle: state.last_commit.elapsed(),
                 unread: state.input_unread(),
+                front: state.front_pid(),
             };
             out.write_all(Reply::Status(status).line().as_bytes())?;
         }

@@ -3,7 +3,7 @@
 use ports::{BoxFuture, Screen};
 use serde_json::{Map, Value, json};
 
-use crate::registry::{CallError, Content, Tool, ToolOutput, ToolSpec};
+use crate::registry::{CallError, Content, Effect, Tool, ToolOutput, ToolSpec};
 
 pub struct Screenshot;
 
@@ -16,6 +16,10 @@ impl Tool for Screenshot {
                           The screen is yours alone: no one else's windows are on it.",
             input_schema: schema.as_object().cloned().unwrap_or_default(),
         }
+    }
+
+    fn effect(&self) -> Effect {
+        Effect::Look
     }
 
     fn call<'a>(

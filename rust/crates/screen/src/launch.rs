@@ -19,6 +19,7 @@ use tokio::process::Command;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
+use crate::apps::name_of;
 use crate::process::ScreenChild;
 
 /// How long an app may take to open its window before `launch` stops waiting.
@@ -43,7 +44,7 @@ const USERS_SESSION: &[&str] = &[
 impl ScreenChild {
     pub(crate) async fn start_app(&self, app: AppCommand) -> Result<Launched, ScreenError> {
         let command = self.app_command(&app.program, &app.args)?;
-        self.run_app(command).await
+        self.run_app(command, &name_of(&app.program)).await
     }
 
     /// A command that starts `program` as an app on this screen, with this
@@ -75,9 +76,13 @@ impl ScreenChild {
         Ok(command)
     }
 
-    /// Starts `command`, made by [`Self::app_command`], and waits a while for
-    /// its window.
-    pub(crate) async fn run_app(&self, mut command: Command) -> Result<Launched, ScreenError> {
+    /// Starts `command`, made by [`Self::app_command`], as the app `name`,
+    /// and waits a while for its window.
+    pub(crate) async fn run_app(
+        &self,
+        mut command: Command,
+        name: &str,
+    ) -> Result<Launched, ScreenError> {
         let before = self.status().await?.windows;
         let mut child = command.spawn().map_err(|e| ScreenError(e.to_string()))?;
         // The command holds the parent's copies of what it hands the app.
@@ -85,6 +90,7 @@ impl ScreenChild {
         let Some(pid) = child.id() else {
             return Err(ScreenError("it vanished as it started".to_owned()));
         };
+        self.apps.started(pid, name);
         let output = Output::default();
         let readers = [
             child.stdout.take().map(|out| output.keep(out)),

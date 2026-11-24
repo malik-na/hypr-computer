@@ -157,6 +157,13 @@ pub trait Screen: Send + Sync {
         let _ = page;
         Box::pin(async { Err(ScreenError("this screen has no browser".to_owned())) })
     }
+    /// The app whose window is in front: the file name of the program
+    /// [`Screen::launch`] started that the window belongs to (that program's
+    /// or a child's of it), or `domain::limits::BROWSER` for the browser's.
+    /// `None` with no window in front, or one no launch made.
+    fn front_app(&self) -> BoxFuture<'_, Option<String>> {
+        Box::pin(async { None })
+    }
     /// The guard is done with this screen for the tool call it was given
     /// for: `Some(why)` if the call was stopped on the way, and the agent
     /// gets `why` instead of the tool's result.

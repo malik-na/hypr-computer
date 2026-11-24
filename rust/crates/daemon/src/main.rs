@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 
 mod control;
+mod limits;
 mod listen;
 mod mcp;
 mod owner;
@@ -15,6 +16,7 @@ use std::sync::Arc;
 
 use adapters::SystemClock;
 use domain::paths;
+use limits::LimitsFile;
 use listenfd::ListenFd;
 use screen::ScreenProcesses;
 use tracing::{Level, info};
@@ -79,6 +81,7 @@ fn main() -> ExitCode {
         }
     };
     info!("{}", listening.describe());
+    let limits = Arc::new(LimitsFile::new(listening.dir.join(paths::LIMITS_NAME)));
     let desktop = paths::desktop_socket(
         std::env::var_os("WAYLAND_DISPLAY").as_deref(),
         runtime_dir.as_deref(),
@@ -102,6 +105,7 @@ fn main() -> ExitCode {
         screens,
         stop,
         desktop,
+        limits,
     )) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {

@@ -3,6 +3,7 @@
 use std::fmt;
 use std::sync::Arc;
 
+use domain::limits::{Action, Refusal, normalize_site};
 use ports::{BoxFuture, Png, Screen};
 use serde_json::{Map, Value};
 
@@ -25,6 +26,11 @@ const TOOLS: &[&dyn Tool] = &[
 /// One MCP tool. Private to this crate: callers go through [`Registry::call`].
 pub(crate) trait Tool: Send + Sync {
     fn spec(&self) -> ToolSpec;
+    /// What the tool does, as the user's limits see it. Unless it says
+    /// otherwise, a tool gives input to the app in front.
+    fn effect(&self) -> Effect {
+        Effect::Input
+    }
     /// Runs the tool on the caller's screen. Only the guard calls this, once
     /// the session has let the call through.
     fn call<'a>(
@@ -32,6 +38,19 @@ pub(crate) trait Tool: Send + Sync {
         screen: &'a dyn Screen,
         args: Map<String, Value>,
     ) -> BoxFuture<'a, Result<ToolOutput, CallError>>;
+}
+
+/// What a tool does, as the user's limits see it (`domain::limits::Action`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Effect {
+    /// It only reads the screen.
+    Look,
+    /// It gives input to the app whose window is in front.
+    Input,
+    /// It starts the program in its `app` argument.
+    Launch,
+    /// It opens the page in its `url` argument in the browser.
+    Open,
 }
 
 /// What `tools/list` says about a tool.
@@ -49,6 +68,12 @@ pub trait Admit: Send + Sync {
     /// The session's screen, if a tool may use it now; otherwise why not, in
     /// words for the agent.
     fn admit(&self) -> BoxFuture<'_, Result<Arc<dyn Screen>, String>>;
+    /// Whether the limits the user has set allow `action` now; if not,
+    /// why. Asked at every call, once the session has let it through.
+    fn allows(&self, action: Action<'_>) -> Result<(), Refusal> {
+        let _ = action;
+        Ok(())
+    }
 }
 
 /// One piece of a tool's result.
@@ -126,7 +151,8 @@ impl Registry {
     /// The guard: every tool call goes through here and nowhere else. Checks
     /// that apply to every tool (stop, take-over, limits, the action log)
     /// belong in this function, not in the tools. A call the session doesn't
-    /// let through gets a failed result that says why, and the tool never runs.
+    /// let through, or the user's limits don't allow, gets a failed result that
+    /// says why, and the tool never runs.
     /// One stopped on the way gets what [`Screen::end_call`] says instead of
     /// its result; otherwise [`Screen::note`] is added to it.
     pub async fn call(
@@ -144,6 +170,10 @@ impl Registry {
             Ok(screen) => screen,
             Err(why) => return Ok(ToolOutput::error(why)),
         };
+        if let Err(why) = allowed(tool.effect(), session, screen.as_ref(), &args).await {
+            screen.end_call().await;
+            return Ok(ToolOutput::error(why.to_string()));
+        }
         let output = tool.call(screen.as_ref(), args).await;
         match screen.end_call().await {
             Some(why) => Ok(ToolOutput::error(why)),
@@ -151,6 +181,34 @@ impl Registry {
                 output.content.extend(screen.note().map(Content::Text));
                 output
             }),
+        }
+    }
+}
+
+/// Whether the user's limits allow a call of a tool that does `effect`
+/// with `args`, on `screen`, now. Arguments a tool won't take are let
+/// through to it, which refuses them, unless a limit refuses the call first.
+async fn allowed(
+    effect: Effect,
+    session: &dyn Admit,
+    screen: &dyn Screen,
+    args: &Map<String, Value>,
+) -> Result<(), Refusal> {
+    let text = |name: &str| args.get(name).and_then(Value::as_str).unwrap_or_default();
+    match effect {
+        Effect::Look => session.allows(Action::Look),
+        Effect::Input => {
+            let app = screen.front_app().await;
+            session.allows(Action::Input {
+                app: app.as_deref(),
+            })
+        }
+        Effect::Launch => session.allows(Action::Launch {
+            program: text("app"),
+        }),
+        Effect::Open => {
+            let host = normalize_site(text("url")).unwrap_or_default();
+            session.allows(Action::Open { host: &host })
         }
     }
 }

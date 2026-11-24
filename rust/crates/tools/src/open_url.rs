@@ -3,7 +3,7 @@
 use ports::{BoxFuture, Screen, WebPage};
 use serde_json::{Map, Value, json};
 
-use crate::registry::{CallError, Tool, ToolOutput, ToolSpec};
+use crate::registry::{CallError, Effect, Tool, ToolOutput, ToolSpec};
 
 pub struct OpenUrl;
 
@@ -33,6 +33,10 @@ impl Tool for OpenUrl {
                           opens in a private window, which has none of them.",
             input_schema: schema.as_object().cloned().unwrap_or_default(),
         }
+    }
+
+    fn effect(&self) -> Effect {
+        Effect::Open
     }
 
     fn call<'a>(

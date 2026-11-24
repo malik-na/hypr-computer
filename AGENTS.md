@@ -39,7 +39,7 @@ cargo test --workspace       # unit tests, black-box tests of the real binaries,
 
 CI runs all three on x86-64 and ARM64. They need Linux, with pixman, libxkbcommon and xkeyboard-config for the agent's screen, and foot, a real app the tests run on it (Debian and Ubuntu: `libpixman-1-dev libxkbcommon-dev xkb-data foot fonts-dejavu-core`; Arch: `pixman libxkbcommon xkeyboard-config foot ttf-dejavu`).
 
-- **Adding a tool** is one file, one registry line and its test: write `rust/crates/tools/src/<name>.rs`, add `mod <name>;` to `rust/crates/tools/src/lib.rs` and `&<name>::<Tool>,` to `TOOLS` in `rust/crates/tools/src/registry.rs`. Tools are called only through `Registry::call`, the one guard; checks every call needs go there, not in the tool.
+- **Adding a tool** is one file, one registry line and its test: write `rust/crates/tools/src/<name>.rs`, add `mod <name>;` to `rust/crates/tools/src/lib.rs` and `&<name>::<Tool>,` to `TOOLS` in `rust/crates/tools/src/registry.rs`. Tools are called only through `Registry::call`, the one guard; checks every call needs go there, not in the tool. A tool that only reads the screen, launches a program or opens a page says so with `Tool::effect` (the default is input to the app in front): the guard asks the user's limits (`Admit::allows`, `domain::limits`) about every call by it.
 - **`domain` stays pure:** no I/O, no async, no clock reads, no other workspace crate. Code that needs the outside world goes in `adapters`, behind a trait in `ports`.
 - **No unsafe code, and no `unwrap`, `expect` or `panic` outside tests.** Lint attributes that switch these off fail the build.
 - **Every stateful part needs a TLA+ spec in `specs/`** that fails first on a real past bug.

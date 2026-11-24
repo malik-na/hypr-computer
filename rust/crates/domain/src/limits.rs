@@ -6,6 +6,7 @@
 mod command;
 mod describe;
 mod names;
+mod record;
 mod site;
 
 use std::collections::BTreeSet;
