@@ -1,14 +1,30 @@
 import asyncio
 import collections
+import importlib.util
 import os
 import sys
+import tempfile
 import time
 
 import pytest
 
+GUARD = os.path.join(os.path.dirname(__file__), "guard")
+GUARD_LOG = os.path.join(tempfile.mkdtemp(prefix="hc-guard-"), "touched")
+os.environ["HYPR_COMPUTER_TEST_GUARD"] = GUARD_LOG
+os.environ["PYTHONPATH"] = os.pathsep.join(filter(None, [GUARD, os.environ.get("PYTHONPATH")]))
+_spec = importlib.util.spec_from_file_location("guard", os.path.join(GUARD, "sitecustomize.py"))
+_spec.loader.exec_module(importlib.util.module_from_spec(_spec))  # the guard, here as in every process started
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import server  # noqa: E402
 from fakes import FakeHyprland, FakeInput, fake_bin  # noqa: E402
+
+
+def pytest_sessionfinish(session):
+    touched = open(GUARD_LOG).read() if os.path.exists(GUARD_LOG) else ""
+    if touched:
+        print(f"\nTests touched the real desktop (pid, what):\n{touched}", file=sys.stderr)
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED
 
 
 @pytest.fixture(autouse=True)
