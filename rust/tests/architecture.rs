@@ -195,9 +195,12 @@ fn every_file_in_tools_is_a_registered_tool() {
             continue;
         }
         let module = file.trim_end_matches(".rs").to_owned();
+        // A tool named like a keyword (`move`, `type`) is `mod r#move;`.
         let declared = code_lines(&lib).any(|(_, l)| {
             let l = l.trim();
-            l == format!("mod {module};") || l == format!("pub mod {module};")
+            [module.clone(), format!("r#{module}")]
+                .iter()
+                .any(|m| l == format!("mod {m};") || l == format!("pub mod {m};"))
         });
         let listed = code_lines(tools_list).any(|(_, l)| l.contains(&format!("{module}::")));
         if !(declared && listed) {

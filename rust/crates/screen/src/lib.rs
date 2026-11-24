@@ -9,6 +9,7 @@
 mod launch;
 mod process;
 pub mod protocol;
+mod settle;
 mod strays;
 
 pub use process::ScreenProcesses;

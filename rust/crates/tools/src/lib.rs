@@ -11,7 +11,9 @@ mod args;
 mod registry;
 
 // One line per tool (rustfmt keeps them sorted):
+mod click;
 mod launch_app;
+mod r#move;
 mod screenshot;
 
 pub use registry::{Admit, CallError, Content, Registry, ToolOutput, ToolSpec};
