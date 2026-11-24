@@ -179,7 +179,7 @@ impl State {
 }
 
 /// "a", "a and b", "a, b and c".
-fn and_list(items: &[String]) -> String {
+pub(super) fn and_list(items: &[String]) -> String {
     match items {
         [] => String::new(),
         [one] => one.clone(),

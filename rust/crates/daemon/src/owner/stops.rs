@@ -96,6 +96,16 @@ impl State {
                  until `hypr-computer resume`."
             ),
         };
+        self.answer_when_stopped(ids, answer, reply);
+    }
+
+    /// Answers `answer` once none of `ids` is stopping any more.
+    pub(super) fn answer_when_stopped(
+        &mut self,
+        ids: Vec<SessionId>,
+        answer: String,
+        reply: oneshot::Sender<Reply>,
+    ) {
         self.stop_waiters.push(Waiter {
             sessions: ids,
             answer,
@@ -123,7 +133,7 @@ impl State {
     }
 
     /// The sessions `Stops` knows.
-    fn stop_ids(&self) -> Vec<SessionId> {
+    pub(super) fn stop_ids(&self) -> Vec<SessionId> {
         self.sessions
             .iter()
             .map(|(id, _)| id)
@@ -133,7 +143,7 @@ impl State {
 
     /// Answers the stops whose sessions are stopped, resumed or gone, and
     /// lets through the tool calls that may run now.
-    fn after_stop_step(&mut self) {
+    pub(super) fn after_stop_step(&mut self) {
         let stops = &self.stops;
         for waiter in &mut self.stop_waiters {
             waiter

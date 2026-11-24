@@ -43,6 +43,8 @@ async fn answer(stream: UnixStream, owner: Owner) {
         (Ok(Ok(_)), Some(Command::Watch)) => owner.watch().await,
         (Ok(Ok(_)), Some(Command::Stop)) => owner.stop_all().await,
         (Ok(Ok(_)), Some(Command::Resume)) => owner.resume_all().await,
+        (Ok(Ok(_)), Some(Command::StopOne(agent))) => owner.stop_one(agent).await,
+        (Ok(Ok(_)), Some(Command::ResumeOne(agent))) => owner.resume_one(agent).await,
         (Ok(Ok(_)), None) => Some(Reply::Refused(format!(
             "unknown command {:?}",
             line.trim_end()
