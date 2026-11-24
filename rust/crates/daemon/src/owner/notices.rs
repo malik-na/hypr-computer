@@ -7,6 +7,7 @@
 //! screen.
 
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 use domain::SessionId;
 use domain::notice::{Answer, Effect, Event, Notice};
@@ -15,7 +16,11 @@ use domain::view::title;
 use ports::{Heard, Notification};
 use tracing::{info, warn};
 
-use super::State;
+use super::{Msg, State};
+
+/// How long the notification service has to show a notice before the host
+/// desktop shows its own. The service may still answer after.
+const ANSWER_TIME: Duration = Duration::from_secs(3);
 
 /// How long "done" stays on screen.
 const DONE_MS: u32 = 4000;
@@ -81,6 +86,11 @@ impl State {
         self.notice_step(event);
     }
 
+    /// The notification service didn't answer session `id`'s notice in time.
+    pub(super) fn notice_timeout(&mut self, id: SessionId) {
+        self.notice_step(Event::Timeout(id));
+    }
+
     /// Whether a notice waits for the service's answer although its session
     /// has ended: it must be replaced when the answer comes.
     pub(super) fn notices_pending(&self) -> bool {
@@ -95,6 +105,11 @@ impl State {
                 Effect::Show(id) => {
                     let notice = notice(self.label(id));
                     self.notifications.show(id, notice);
+                    let tx = self.tx.clone();
+                    tokio::spawn(async move {
+                        tokio::time::sleep(ANSWER_TIME).await;
+                        let _ = tx.send(Msg::NoticeTimeout(id));
+                    });
                 }
                 Effect::Done(id, note) => {
                     info!("{id}: notice replaced by \"done\"");
@@ -106,7 +121,19 @@ impl State {
                     self.stops.step(stop::Event::Stop(id));
                     self.after_stop_step();
                 }
-                Effect::Host(_) => {}
+                Effect::Host(id) => {
+                    let (desktop, message) =
+                        (self.desktop.clone(), host_notice(self.label(id), id));
+                    tokio::spawn(async move {
+                        match desktop.notify(message).await {
+                            Ok(()) => info!("{id}: the desktop showed its notice"),
+                            Err(e) => warn!(
+                                "{id}: the user isn't told: the notification service didn't show \
+                                 the notice, and the desktop can't show its own: {e}"
+                            ),
+                        }
+                    });
+                }
             }
         }
         let notices = &self.notices;
@@ -131,6 +158,16 @@ fn notice(label: &str) -> Notification {
         expires_ms: None,
         replaces: None,
     }
+}
+
+/// The host desktop's notice, for when the service can't show one: it has no
+/// buttons, so it says how to stop the agent.
+fn host_notice(label: &str, id: SessionId) -> String {
+    format!(
+        "AI agent at work: {label}. Watch it with Super+0 or hypr-computer watch. \
+         To stop it: hypr-computer stop {}",
+        id.get()
+    )
 }
 
 /// "Done", in place of notice `note`: it goes away by itself.

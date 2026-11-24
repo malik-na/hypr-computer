@@ -51,6 +51,8 @@ enum Msg {
     Screen(SessionId, News),
     /// What the notification service did.
     Heard(Heard),
+    /// The service didn't answer a session's notice in time.
+    NoticeTimeout(SessionId),
     /// `hypr-computer watch`.
     Watch(oneshot::Sender<Reply>),
     /// `hypr-computer stop`.
@@ -329,6 +331,7 @@ async fn run(mut rx: mpsc::UnboundedReceiver<Msg>, mut state: State) {
             Msg::Dropped(id, call) => state.dropped(id, call),
             Msg::Screen(id, news) => state.news(id, news),
             Msg::Heard(heard) => state.heard(heard),
+            Msg::NoticeTimeout(id) => state.notice_timeout(id),
             Msg::Watch(reply) => state.watch(reply),
             Msg::StopAll(reply) => state.stop_all(reply),
             Msg::ResumeAll(reply) => state.resume_all(reply),
