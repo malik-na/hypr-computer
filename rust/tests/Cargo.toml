@@ -134,6 +134,11 @@ path = "stop_all_spec.rs"
 name = "stop_one_spec"
 path = "stop_one_spec.rs"
 
+# #26, written from the spec by an independent test agent; helpers in spec26/.
+[[test]]
+name = "open_url_spec"
+path = "open_url_spec.rs"
+
 # The tiny Wayland app the tests put on a screen (see support/app.rs).
 [[bin]]
 name = "hc-test-app"

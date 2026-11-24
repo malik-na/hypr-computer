@@ -8,7 +8,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use domain::SessionId;
 use domain::stop::{Effect, Event};
 use ports::{
-    Action, AppCommand, BoxFuture, InputGate, Launched, Png, Screen, ScreenError, ScreenProcess,
+    Action, AppCommand, BoxFuture, InputGate, Launched, OpenedPage, Png, Screen, ScreenError,
+    ScreenProcess, WebPage,
 };
 use tokio::sync::{mpsc, oneshot};
 
@@ -122,6 +123,18 @@ impl Screen for Pass {
                 return Err(self.refused());
             }
             self.screen.launch(app).await
+        })
+    }
+
+    /// Opening a page changes the screen as an input does, so it is asked
+    /// for as one.
+    fn open_page(&self, page: WebPage) -> BoxFuture<'_, Result<OpenedPage, ScreenError>> {
+        Box::pin(async move {
+            if !self.ask(false).await {
+                self.abort().await;
+                return Err(self.refused());
+            }
+            self.screen.open_page(page).await
         })
     }
 

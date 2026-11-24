@@ -117,6 +117,24 @@ pub enum Action {
     Drag { from: Point, to: Point },
 }
 
+/// A web page for the screen's browser to open.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WebPage {
+    /// An `http` or `https` URL with a host.
+    pub url: String,
+}
+
+/// A page the screen's browser opened, as it ended up.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OpenedPage {
+    /// Where it ended up, after any redirects.
+    pub url: String,
+    pub title: String,
+    /// Whether its `load` event fired; `false` if it was still loading when
+    /// the browser stopped waiting.
+    pub loaded: bool,
+}
+
 /// An agent's screen, as its tools see it.
 pub trait Screen: Send + Sync {
     /// The whole screen, as it is now.
@@ -128,6 +146,15 @@ pub trait Screen: Send + Sync {
     /// Starts an app on this screen and on no other, and waits a while for
     /// its window. The app ends with the screen, and so does all it starts.
     fn launch(&self, app: AppCommand) -> BoxFuture<'_, Result<Launched, ScreenError>>;
+    /// Opens `page` in this screen's browser, starting the browser with a
+    /// fresh profile the first time, and returns once the page has loaded
+    /// and is in front, so the next screenshot shows it. The browser ends
+    /// with the screen, and its profile is deleted. A screen without a
+    /// browser says so.
+    fn open_page(&self, page: WebPage) -> BoxFuture<'_, Result<OpenedPage, ScreenError>> {
+        let _ = page;
+        Box::pin(async { Err(ScreenError("this screen has no browser".to_owned())) })
+    }
     /// The guard is done with this screen for the tool call it was given
     /// for: `Some(why)` if the call was stopped on the way, and the agent
     /// gets `why` instead of the tool's result.

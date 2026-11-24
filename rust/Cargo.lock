@@ -183,6 +183,7 @@ checksum = "1b60b5124979fccd9addd89d8b97a1d6eebb4950694520c75ddd722535ea443f"
 dependencies = [
  "nix",
  "thiserror 2.0.21",
+ "tokio",
 ]
 
 [[package]]
@@ -1016,6 +1017,7 @@ dependencies = [
 name = "screen"
 version = "0.0.0"
 dependencies = [
+ "command-fds",
  "domain",
  "png",
  "ports",

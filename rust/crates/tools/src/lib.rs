@@ -16,6 +16,7 @@ mod drag;
 mod key;
 mod launch_app;
 mod r#move;
+mod open_url;
 mod screenshot;
 mod scroll;
 mod r#type;
