@@ -19,10 +19,15 @@ path = "daemon_shim.rs"
 name = "socket_activation"
 path = "socket_activation.rs"
 
+[[test]]
+name = "architecture"
+path = "architecture.rs"
+
 [dev-dependencies]
 command-fds = "0.3.3"
 serde_json.workspace = true
 tempfile = "3.27.0"
+toml = "0.9"
 
 [lints]
 workspace = true
