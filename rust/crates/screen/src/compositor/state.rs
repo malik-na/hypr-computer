@@ -1,6 +1,7 @@
 //! Everything the screen holds, and how it is set up.
 
 use std::error::Error;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use screen::SIZE;
@@ -11,7 +12,7 @@ use smithay::backend::renderer::pixman::PixmanRenderer;
 use smithay::desktop::{PopupManager, Space, Window};
 use smithay::input::{Seat, SeatState};
 use smithay::output::{Mode, Output, PhysicalProperties, Scale, Subpixel};
-use smithay::reexports::calloop::LoopSignal;
+use smithay::reexports::calloop::{LoopHandle, LoopSignal};
 use smithay::reexports::pixman;
 use smithay::reexports::wayland_server::DisplayHandle;
 use smithay::reexports::wayland_server::backend::{ClientData, ClientId, DisconnectReason};
@@ -26,6 +27,7 @@ use smithay::wayland::shm::ShmState;
 use crate::keymap::Keymap;
 use crate::reading::Reading;
 use crate::seat::new_seat;
+use crate::view::View;
 
 /// The screen's size as Smithay wants it.
 pub const WIDTH: i32 = SIZE.0 as i32;
@@ -34,7 +36,14 @@ pub const HEIGHT: i32 = SIZE.1 as i32;
 pub struct State {
     pub display: DisplayHandle,
     loop_signal: LoopSignal,
+    pub loop_handle: LoopHandle<'static, State>,
     started: Instant,
+    /// The user's desktop's Wayland socket, if there is one.
+    pub desktop: Option<PathBuf>,
+    /// The live view, once the daemon has opened it.
+    pub view: Option<View>,
+    /// How many views were ever opened.
+    pub views_opened: u64,
 
     pub space: Space<Window>,
     pub output: Output,
@@ -51,6 +60,8 @@ pub struct State {
     pub last_commit: Instant,
     /// Whether apps have read the agent's input.
     pub reading: Reading,
+    /// How many renders changed what is on the screen.
+    pub frame: u64,
 
     pub renderer: PixmanRenderer,
     /// What the screen is rendered into; kept, so a render redraws only what changed.
@@ -70,7 +81,12 @@ pub struct State {
 }
 
 impl State {
-    pub fn new(display: DisplayHandle, loop_signal: LoopSignal) -> Result<Self, Box<dyn Error>> {
+    pub fn new(
+        display: DisplayHandle,
+        loop_signal: LoopSignal,
+        loop_handle: LoopHandle<'static, State>,
+        desktop: Option<PathBuf>,
+    ) -> Result<Self, Box<dyn Error>> {
         let mut renderer = PixmanRenderer::new()?;
         let target = renderer.create_buffer(Fourcc::Argb8888, (WIDTH, HEIGHT).into())?;
 
@@ -112,7 +128,11 @@ impl State {
             _xdg_decoration_state: XdgDecorationState::new::<State>(&display),
             display,
             loop_signal,
+            loop_handle,
             started: Instant::now(),
+            desktop,
+            view: None,
+            views_opened: 0,
             space,
             output,
             windows: Vec::new(),
@@ -123,6 +143,7 @@ impl State {
             commits: 0,
             last_commit: Instant::now(),
             reading: Reading::default(),
+            frame: 0,
             renderer,
             target,
             damage,
@@ -158,6 +179,7 @@ impl State {
         }
         self.space.refresh();
         self.popups.cleanup();
+        self.draw_view();
     }
 }
 

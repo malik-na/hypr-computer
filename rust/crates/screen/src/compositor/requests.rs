@@ -76,6 +76,19 @@ pub fn answer(state: &mut State, request: Incoming, out: &mut impl Write) -> io:
         Ok(Request::Act(action)) => give(state, out, |state| act(state, action))?,
         Ok(Request::Press(at)) => give(state, out, |state| state.press(at))?,
         Ok(Request::Release(at)) => give(state, out, |state| state.release(at))?,
+        Ok(Request::Windows) => {
+            let json = state.window_list();
+            out.write_all(Reply::Json(json.len()).line().as_bytes())?;
+            out.write_all(&json)?;
+        }
+        Ok(Request::View(title)) => {
+            // Not input: the app has nothing new to read.
+            let reply = match state.open_view(&title) {
+                Ok(()) => Reply::Done(state.commits),
+                Err(why) => Reply::Error(why),
+            };
+            out.write_all(reply.line().as_bytes())?;
+        }
         Err(line) => {
             let why = format!("unknown request {line:?}");
             out.write_all(Reply::Error(why).line().as_bytes())?;

@@ -21,7 +21,8 @@ impl State {
         encode_png(&self.pixels(Fourcc::Abgr8888)?)
     }
 
-    /// Draws what changed on the screen since the last render.
+    /// Draws what changed on the screen since the last render, and counts
+    /// the renders that changed something in `self.frame`.
     pub fn render(&mut self) -> Result<(), String> {
         let State {
             renderer,
@@ -34,7 +35,7 @@ impl State {
         let mut framebuffer = renderer
             .bind(target)
             .map_err(|e| format!("can't render: {e}"))?;
-        render_output::<_, WaylandSurfaceRenderElement<PixmanRenderer>, _, _>(
+        let rendered = render_output::<_, WaylandSurfaceRenderElement<PixmanRenderer>, _, _>(
             output,
             renderer,
             &mut framebuffer,
@@ -47,6 +48,9 @@ impl State {
             BACKGROUND,
         )
         .map_err(|e| format!("can't render: {e:?}"))?;
+        if rendered.damage.is_some_and(|d| !d.is_empty()) {
+            self.frame += 1;
+        }
         Ok(())
     }
 

@@ -6,9 +6,11 @@
 #![allow(dead_code)]
 
 pub mod app;
+pub mod desktop;
 pub mod hyprland;
 mod image;
 
+pub use desktop::Desktop;
 pub use image::Image;
 
 use std::fs;
@@ -183,6 +185,13 @@ pub struct Daemon {
 impl Daemon {
     pub fn start(env: &Env) -> Self {
         Self::spawn(env, env.command(&daemon_bin()), "daemon.log")
+    }
+
+    /// The daemon of a Hyprland session on `desktop`.
+    pub fn start_on(env: &Env, desktop: &Desktop) -> Self {
+        let mut cmd = env.command(&daemon_bin());
+        desktop.apply(&mut cmd);
+        Self::spawn(env, cmd, "daemon.log")
     }
 
     /// Starts `cmd` as the daemon and waits until it accepts connections.

@@ -34,16 +34,22 @@ const MAX_REPLY: usize = 64 << 20;
 const SOCKET: &str = "wayland";
 
 /// Starts screens as `hypr-computer-screen` processes, each with its files in
-/// a directory of its own, `<dir>/screen-<session number>/`.
+/// a directory of its own, `<dir>/screen-<session number>/`, and its live
+/// view on the user's desktop, the Wayland socket `desktop`, if there is one.
 #[derive(Debug)]
 pub struct ScreenProcesses {
     program: PathBuf,
     dir: PathBuf,
+    desktop: Option<PathBuf>,
 }
 
 impl ScreenProcesses {
-    pub fn new(program: PathBuf, dir: PathBuf) -> Self {
-        Self { program, dir }
+    pub fn new(program: PathBuf, dir: PathBuf, desktop: Option<PathBuf>) -> Self {
+        Self {
+            program,
+            dir,
+            desktop,
+        }
     }
 }
 
@@ -58,6 +64,7 @@ impl Screens for ScreenProcesses {
         };
         let mut child = Command::new(&self.program)
             .arg(dir.join(SOCKET))
+            .args(&self.desktop)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             // A group of its own, so a teardown kills it and all it starts.
@@ -166,7 +173,7 @@ impl Pipe {
             }
             (Request::Status, Some(Reply::Status(status))) => Ok(Ok(Answer::Status(status))),
             (
-                Request::Act(_) | Request::Press(_) | Request::Release(_),
+                Request::Act(_) | Request::Press(_) | Request::Release(_) | Request::View(_),
                 Some(Reply::Done(commits)),
             ) => Ok(Ok(Answer::Done(commits))),
             (_, Some(Reply::Error(why))) => Ok(Err(why)),
@@ -328,6 +335,18 @@ impl ScreenProcess for ScreenChild {
                 None => Err(ScreenError(
                     "the screen's screenshot isn't a PNG".to_owned(),
                 )),
+            }
+        })
+    }
+
+    fn open_view(&self, title: String) -> BoxFuture<'_, Result<(), ScreenError>> {
+        Box::pin(async move {
+            match self
+                .ask_on(&mut *self.pipe.lock().await, &Request::View(title))
+                .await?
+            {
+                Answer::Done(_) => Ok(()),
+                _ => Err(mismatch()),
             }
         })
     }

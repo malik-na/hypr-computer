@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use domain::EndReason;
-use ports::{Clock, Screens};
+use ports::{Clock, Desktop, Screens};
 use rmcp::ServiceExt;
 use rmcp::service::QuitReason;
 use tokio::net::UnixStream;
@@ -29,6 +29,7 @@ pub async fn run(
     clock: Arc<dyn Clock>,
     screens: Arc<dyn Screens>,
     stop: CancellationToken,
+    desktop: Arc<dyn Desktop>,
 ) -> Result<(), String> {
     let Listening {
         listener,
@@ -41,7 +42,7 @@ pub async fn run(
     let listener = tokio::net::UnixListener::from_std(listener)
         .map_err(|e| format!("can't use the socket: {e}"))?;
 
-    let (owner, owner_task) = Owner::spawn(clock, screens);
+    let (owner, owner_task) = Owner::spawn(clock, screens, desktop);
     let registry = Arc::new(Registry::builtin());
     let sessions = TaskTracker::new();
 

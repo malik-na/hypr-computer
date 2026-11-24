@@ -93,11 +93,17 @@ impl App {
     /// Opens the app on session `n`'s screen, painted `top` over `bottom`, and
     /// returns once the screen has the picture.
     pub fn paint(env: &Env, n: u64, top: [u8; 3], bottom: [u8; 3]) -> App {
+        App::paint_on(env, &env.screen_socket(n), top, bottom)
+    }
+
+    /// Opens the app on the Wayland display at `socket`, painted `top` over
+    /// `bottom`, and returns once it has the picture.
+    pub fn paint_on(env: &Env, socket: &Path, top: [u8; 3], bottom: [u8; 3]) -> App {
         let log = Log::new(env);
         let child = env
             .command(&program())
             .args(args(top, bottom, &log))
-            .env("WAYLAND_DISPLAY", env.screen_socket(n))
+            .env("WAYLAND_DISPLAY", socket)
             .stdin(Stdio::null())
             .spawn()
             .unwrap();

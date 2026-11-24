@@ -141,6 +141,9 @@ pub trait ScreenProcess: Screen {
     /// The readiness check (`Effect::VerifyScreen`): passes only if the
     /// screen really serves what the agent will ask of it.
     fn verify(&self) -> BoxFuture<'_, Result<(), ScreenError>>;
+    /// Opens the screen's live view, a window called `title` on the user's
+    /// desktop. It closes when the screen does.
+    fn open_view(&self, title: String) -> BoxFuture<'_, Result<(), ScreenError>>;
     /// Resolves when the process has exited, for whatever reason.
     fn exited(&self) -> BoxFuture<'_, ()>;
     /// `Effect::Teardown`: kills the screen and everything it started, waits

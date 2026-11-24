@@ -23,7 +23,11 @@ impl Image {
         let png = STANDARD
             .decode(block["data"].as_str().expect("data"))
             .expect("base64");
-        let mut reader = png::Decoder::new(png.as_slice()).read_info().expect("png");
+        Self::from_png(&png)
+    }
+
+    pub fn from_png(png: &[u8]) -> Self {
+        let mut reader = png::Decoder::new(png).read_info().expect("png");
         let mut buf = vec![0; reader.output_buffer_size()];
         let info = reader.next_frame(&mut buf).expect("png frame");
         buf.truncate(info.buffer_size());
@@ -43,6 +47,17 @@ impl Image {
             height: info.height,
             rgb,
         }
+    }
+
+    /// How many pixels differ from `other`'s, which must be the same size.
+    pub fn pixels_unlike(&self, other: &Image) -> usize {
+        assert_eq!(
+            (self.width, self.height),
+            (other.width, other.height),
+            "the images differ in size"
+        );
+        let (ours, theirs) = (self.rgb.as_chunks::<3>().0, other.rgb.as_chunks::<3>().0);
+        ours.iter().zip(theirs).filter(|(a, b)| a != b).count()
     }
 
     pub fn pixel(&self, x: u32, y: u32) -> [u8; 3] {
