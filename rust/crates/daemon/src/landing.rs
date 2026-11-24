@@ -68,4 +68,8 @@ impl Screen for Landing {
     fn end_call(&self) -> BoxFuture<'_, Option<String>> {
         self.screen.end_call()
     }
+
+    fn note(&self) -> Option<String> {
+        self.screen.note()
+    }
 }
