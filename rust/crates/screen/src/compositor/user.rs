@@ -198,9 +198,12 @@ impl State {
                 self.join_clipboards();
             }
             ViewNotice::Given => {
-                self.user.has_screen = false;
+                // A hand-back before the user got the screen (they clicked
+                // in during a call) joined nothing, so it parts nothing.
+                if std::mem::replace(&mut self.user.has_screen, false) {
+                    self.part_clipboards();
+                }
                 self.user.handed_back = Some(Instant::now());
-                self.part_clipboards();
                 self.release_user();
                 self.show_banner(false);
                 self.answer_deferred();
