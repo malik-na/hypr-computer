@@ -6,7 +6,7 @@ mod support;
 
 use std::fs;
 use std::os::unix::net::UnixListener;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde_json::json;
 use support::app::{self, Log};
@@ -16,31 +16,47 @@ const RED: [u8; 3] = [0xd0, 0x20, 0x20];
 const BLUE: [u8; 3] = [0x20, 0x40, 0xd0];
 
 /// The user's desktop, as the daemon's environment points to it: a Wayland
-/// socket that notes whether anything connected.
+/// display, and a session bus in the user's runtime dir, each a socket that
+/// notes whether anything connected.
 struct Desktop {
-    socket: PathBuf,
-    listener: UnixListener,
+    display: PathBuf,
+    bus: PathBuf,
+    listeners: Vec<UnixListener>,
 }
 
 impl Desktop {
     fn new(env: &Env) -> Desktop {
-        let socket = env.path("users-desktop");
-        let listener = UnixListener::bind(&socket).unwrap();
-        listener.set_nonblocking(true).unwrap();
-        Desktop { socket, listener }
+        let display = env.path("users-desktop");
+        let bus = env.runtime_dir().join("bus");
+        let listeners = [&display, &bus]
+            .map(|socket| {
+                let listener = UnixListener::bind(socket).unwrap();
+                listener.set_nonblocking(true).unwrap();
+                listener
+            })
+            .into();
+        Desktop {
+            display,
+            bus,
+            listeners,
+        }
     }
 
     fn was_reached(&self) -> bool {
-        self.listener.accept().is_ok()
+        self.listeners.iter().any(|l| l.accept().is_ok())
     }
 }
 
-/// A daemon started from the user's session: `WAYLAND_DISPLAY` and `DISPLAY`
-/// point at the user's desktop.
+/// A daemon started from the user's session: `WAYLAND_DISPLAY`, `DISPLAY` and
+/// the session bus are the user's.
 fn daemon_in_the_users_session(env: &Env, desktop: &Desktop) -> Daemon {
     let mut cmd = env.command(&support::daemon_bin());
-    cmd.env("WAYLAND_DISPLAY", &desktop.socket)
-        .env("DISPLAY", ":42");
+    cmd.env("WAYLAND_DISPLAY", &desktop.display)
+        .env("DISPLAY", ":42")
+        .env(
+            "DBUS_SESSION_BUS_ADDRESS",
+            format!("unix:path={}", desktop.bus.display()),
+        );
     Daemon::spawn(env, cmd, "daemon.log")
 }
 
@@ -70,10 +86,14 @@ fn launch_app_opens_the_app_on_the_agents_screen_and_not_the_users() {
         !desktop.was_reached(),
         "the app connected to the user's desktop"
     );
-    assert_eq!(
-        log.wait_for("ready")["display"],
-        json!(null),
-        "it got the user's X display"
+    let ready = log.wait_for("ready");
+    assert_eq!(ready["display"], json!(null), "it got the user's X display");
+    assert_eq!(ready["bus"], json!(null), "it got the user's session bus");
+    let runtime = ready["runtime_dir"].as_str().unwrap();
+    assert_ne!(
+        Path::new(runtime),
+        env.runtime_dir(),
+        "it got the user's runtime dir, and the sockets in it"
     );
 }
 
@@ -125,4 +145,26 @@ fn an_app_that_ends_at_once_is_reported_with_what_it_printed() {
     let result = agent.call("launch_app", json!({"app": "no-such-app-anywhere"}));
     assert_eq!(result["isError"], true, "{result}");
     assert!(text(&result).contains("No such file"), "{result}");
+}
+
+#[test]
+fn an_app_started_by_a_launcher_that_exits_at_once_is_found() {
+    let env = Env::new();
+    let _daemon = Daemon::start(&env);
+    let mut agent = agent(&env);
+    let log = Log::new(&env);
+    // A launcher: starts the app in the background, and is done.
+    let script = format!(
+        "'{}' {} & exit 0",
+        app::program().display(),
+        app::args(RED, BLUE, &log).join(" ")
+    );
+
+    let result = agent.call("launch_app", json!({"app": "sh", "args": ["-c", script]}));
+    assert_eq!(result["isError"], false, "{result}");
+    assert!(
+        text(&result).contains("window is on your screen"),
+        "{result}"
+    );
+    assert_eq!(agent.screenshot().pixel(640, 200), RED);
 }

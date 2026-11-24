@@ -102,6 +102,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         "event": "ready",
         "pid": process::id(),
         "display": env::var("DISPLAY").ok(),
+        "bus": env::var("DBUS_SESSION_BUS_ADDRESS").ok(),
+        "runtime_dir": env::var("XDG_RUNTIME_DIR").ok(),
         "seat": app.seat,
     }));
     loop {

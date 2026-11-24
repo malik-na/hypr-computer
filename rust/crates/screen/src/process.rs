@@ -7,7 +7,6 @@ use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
 use std::time::Duration;
 
 use domain::SessionId;
@@ -84,7 +83,6 @@ impl Screens for ScreenProcesses {
             pid,
             group,
             dir,
-            launched: AtomicU64::new(0),
             pipe: Mutex::new(Some(Pipe {
                 stdin,
                 stdout: BufReader::new(stdout),
@@ -108,10 +106,8 @@ pub(crate) struct ScreenChild {
     pid: u32,
     /// The screen's process group, which every app on it joins.
     pub(crate) group: Pid,
-    /// The screen's own directory: its socket, and its apps' output.
+    /// The screen's own directory: its socket, and its apps' runtime dir.
     pub(crate) dir: PathBuf,
-    /// How many apps have been started on it.
-    pub(crate) launched: AtomicU64,
     /// `None` once the screen broke the protocol or stopped answering: the
     /// pipe may be out of step, so nothing more is asked of it.
     pipe: Mutex<Option<Pipe>>,
