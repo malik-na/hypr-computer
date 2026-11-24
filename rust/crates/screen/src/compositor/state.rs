@@ -42,6 +42,8 @@ pub struct State {
     pub popups: PopupManager,
     /// An app drew something since apps were last told to draw again.
     pub dirty: bool,
+    /// How many windows have drawn their first picture.
+    pub windows_drawn: u64,
 
     pub renderer: PixmanRenderer,
     /// What the screen is rendered into; kept, so a render redraws only what changed.
@@ -108,6 +110,7 @@ impl State {
             shown: None,
             popups: PopupManager::default(),
             dirty: true,
+            windows_drawn: 0,
             renderer,
             target,
             damage,

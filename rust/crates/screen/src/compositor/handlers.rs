@@ -53,6 +53,7 @@ impl CompositorHandler for State {
             if let Some(window) = self.window_for(&root) {
                 window.on_commit();
             }
+            self.note_drawn(&root);
             if self
                 .shown
                 .as_ref()

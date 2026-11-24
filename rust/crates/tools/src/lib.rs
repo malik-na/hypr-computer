@@ -7,9 +7,11 @@
 //! isn't registered.
 #![forbid(unsafe_code)]
 
+mod args;
 mod registry;
 
-// One line per tool, in the same order as `registry::TOOLS`:
+// One line per tool (rustfmt keeps them sorted):
+mod launch_app;
 mod screenshot;
 
 pub use registry::{Admit, CallError, Content, Registry, ToolOutput, ToolSpec};

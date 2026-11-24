@@ -2,6 +2,7 @@
 //! size, with no decorations. A new window is shown at once; when the shown
 //! one closes, the newest of the others comes back.
 
+use smithay::backend::renderer::utils::with_renderer_surface_state;
 use smithay::desktop::Window;
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
@@ -46,6 +47,19 @@ impl State {
             }
         }
         self.dirty = true;
+    }
+
+    /// Counts `surface`'s window once it has a picture.
+    pub fn note_drawn(&mut self, surface: &WlSurface) {
+        struct Drawn;
+        let has_picture = with_renderer_surface_state(surface, |s| s.buffer().is_some());
+        if has_picture == Some(true)
+            && self
+                .window_for(surface)
+                .is_some_and(|w| w.user_data().insert_if_missing(|| Drawn))
+        {
+            self.windows_drawn += 1;
+        }
     }
 
     /// The window whose main surface is `surface`.
