@@ -76,6 +76,10 @@ path = "not_ready_spec.rs"
 name = "input_isolation_spec"
 path = "input_isolation_spec.rs"
 
+[[test]]
+name = "daemon_signal_spec"
+path = "daemon_signal_spec.rs"
+
 # The tiny Wayland app the tests put on a screen (see support/app.rs).
 [[bin]]
 name = "hc-test-app"
