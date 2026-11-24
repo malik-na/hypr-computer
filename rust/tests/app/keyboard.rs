@@ -17,6 +17,8 @@ use crate::App;
 pub struct Keyboard {
     context: xkb::Context,
     keymap: Option<(xkb::Keymap, xkb::State)>,
+    /// What has the keyboard: the window, or the menu.
+    on: &'static str,
 }
 
 impl Default for Keyboard {
@@ -24,6 +26,7 @@ impl Default for Keyboard {
         Keyboard {
             context: xkb::Context::new(xkb::CONTEXT_NO_FLAGS),
             keymap: None,
+            on: "window",
         }
     }
 }
@@ -95,9 +98,11 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for App {
                     app.note(&json!({"event": "error", "error": e}));
                 }
             }
-            wl_keyboard::Event::Enter { .. } => {
+            wl_keyboard::Event::Enter { surface, .. } => {
                 let drawn = app.drawn;
                 app.note(&json!({"event": "keyboard", "drawn": drawn}));
+                let menu = app.menu.as_ref().is_some_and(|m| m.surface == surface);
+                app.keyboard.on = if menu { "menu" } else { "window" };
             }
             wl_keyboard::Event::Modifiers {
                 mods_depressed,
@@ -116,7 +121,8 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for App {
                 ..
             } => {
                 if let Some((combo, text)) = app.keyboard.read(key) {
-                    app.note(&json!({"event": "key", "key": combo, "text": text}));
+                    let on = app.keyboard.on;
+                    app.note(&json!({"event": "key", "key": combo, "text": text, "on": on}));
                     app.input_seen();
                 }
             }

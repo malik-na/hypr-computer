@@ -9,6 +9,7 @@
 
 mod keyboard;
 mod log;
+mod menu;
 mod pointer;
 mod seat;
 mod window;
@@ -25,6 +26,7 @@ use wayland_client::{Connection, QueueHandle};
 
 use crate::keyboard::Keyboard;
 use crate::log::Log;
+use crate::menu::Menu;
 use crate::pointer::Pointer;
 use crate::window::Window;
 
@@ -42,6 +44,9 @@ pub struct App {
     inputs: u32,
     /// What the screen's seat offers.
     pub seat: Vec<&'static str>,
+    pub wl_seat: Option<wl_seat::WlSeat>,
+    /// The menu, while it is open.
+    pub menu: Option<Menu>,
     pub pointer: Pointer,
     pub keyboard: Keyboard,
 }
@@ -104,12 +109,14 @@ fn run() -> Result<(), Box<dyn Error>> {
         drawn: false,
         inputs: 0,
         seat: Vec::new(),
+        wl_seat: None,
+        menu: None,
         pointer: Pointer::default(),
         keyboard: Keyboard::default(),
     };
     // Optional: with no seat, the app just shows its colours. Like most apps,
     // it takes the keyboard and pointer before it opens its window.
-    let _seat = globals.bind::<wl_seat::WlSeat, _, _>(&qh, 5..=9, ()).ok();
+    app.wl_seat = globals.bind(&qh, 5..=9, ()).ok();
     queue.roundtrip(&mut app)?;
     app.window.open(&qh);
     while !app.window.configured() {

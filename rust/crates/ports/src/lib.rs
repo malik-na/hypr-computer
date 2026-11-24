@@ -108,6 +108,8 @@ pub enum Action {
     },
     /// Types the text as key presses: `\n` is Enter, `\t` is Tab.
     Type(String),
+    /// Presses a key combination, like `ctrl+shift+t`, and lets go of it.
+    Key(String),
 }
 
 /// An agent's screen, as its tools see it.
