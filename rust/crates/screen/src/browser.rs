@@ -1,7 +1,9 @@
 //! The browser on a screen: a Chromium-family browser, started the first
 //! time the agent opens a page, as an app on the screen like any other (so it
 //! ends with the screen), with a fresh profile in the screen's own directory
-//! (so it is deleted with it), extensions off and accessibility on.
+//! and a home of its own (so both are deleted with it, and none of the user's
+//! browser settings, certificates or caches are used), extensions off and
+//! accessibility on.
 //!
 //! The daemon drives it over its DevTools pipe (see `devtools`). A page has
 //! loaded when the browser says its `load` lifecycle event fired for that
@@ -34,6 +36,14 @@ const NAMES: &[&str] = &[
     "chromium-browser",
     "google-chrome-stable",
     "google-chrome",
+];
+/// Where the user's own files and settings are, which the browser's home
+/// stands in for.
+const USERS_DIRS: &[&str] = &[
+    "XDG_CONFIG_HOME",
+    "XDG_CACHE_HOME",
+    "XDG_DATA_HOME",
+    "XDG_STATE_HOME",
 ];
 /// How long a page may take to load before `open_url` stops waiting.
 const LOAD_TIME: Duration = Duration::from_secs(20);
@@ -120,19 +130,28 @@ impl ScreenChild {
         let program = self.browser_program()?;
         let shown = program.to_string_lossy().into_owned();
         let profile = self.dir.join("browser");
-        match DirBuilder::new().mode(0o700).create(&profile) {
-            Err(e) if e.kind() != io::ErrorKind::AlreadyExists => {
-                return Err(ScreenError(format!(
-                    "can't make the browser's profile at {}: {e}",
-                    profile.display()
-                )));
+        // A home of its own too: Chromium keeps some things there whatever
+        // its profile, like the certificates in ~/.pki.
+        let home = self.dir.join("browser-home");
+        for dir in [&profile, &home] {
+            match DirBuilder::new().mode(0o700).create(dir) {
+                Err(e) if e.kind() != io::ErrorKind::AlreadyExists => {
+                    return Err(ScreenError(format!(
+                        "can't make the browser's {}: {e}",
+                        dir.display()
+                    )));
+                }
+                _ => {}
             }
-            _ => {}
         }
         let mut profile_arg = OsString::from("--user-data-dir=");
         profile_arg.push(&profile);
         let (devtools, ends) = DevTools::open()?;
         let mut command = self.app_command(&program, &[])?;
+        command.env("HOME", &home);
+        for name in USERS_DIRS {
+            command.env_remove(name);
+        }
         command
             .arg(profile_arg)
             .args([
