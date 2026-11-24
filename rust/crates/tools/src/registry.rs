@@ -148,6 +148,14 @@ impl Registry {
         self.tools.iter().map(|t| t.spec()).collect()
     }
 
+    /// Whether tool `name` only reads the screen, which read-only mode
+    /// allows: `readOnlyHint` in `tools/list`.
+    pub fn only_reads(&self, name: &str) -> bool {
+        self.tools
+            .iter()
+            .any(|t| t.spec().name == name && t.effect() == Effect::Look)
+    }
+
     /// The guard: every tool call goes through here and nowhere else. Checks
     /// that apply to every tool (stop, take-over, limits, the action log)
     /// belong in this function, not in the tools. A call the session doesn't

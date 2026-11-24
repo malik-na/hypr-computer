@@ -9,7 +9,7 @@ use base64::engine::general_purpose::STANDARD;
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, Implementation,
     InitializeRequestParams, InitializeResult, ListToolsResult, PaginatedRequestParams,
-    ServerCapabilities, ServerConfig, Tool,
+    ServerCapabilities, ServerConfig, Tool, ToolAnnotations,
 };
 use rmcp::service::RequestContext;
 use rmcp::{ErrorData, RoleServer, ServerHandler};
@@ -68,7 +68,15 @@ impl ServerHandler for SessionServer {
     ) -> Result<ListToolsResult, ErrorData> {
         self.meet(&context);
         Ok(ListToolsResult {
-            tools: self.registry.list().into_iter().map(to_mcp_tool).collect(),
+            tools: self
+                .registry
+                .list()
+                .into_iter()
+                .map(|spec| {
+                    let only_reads = self.registry.only_reads(spec.name);
+                    to_mcp_tool(spec, only_reads)
+                })
+                .collect(),
             ..Default::default()
         })
     }
@@ -92,8 +100,12 @@ impl ServerHandler for SessionServer {
     }
 }
 
-fn to_mcp_tool(spec: ToolSpec) -> Tool {
+/// The tool as `tools/list` gives it. `readOnlyHint` says whether it only
+/// reads the screen: in read-only mode (`hypr-computer allow --read-only`)
+/// every other tool is refused.
+fn to_mcp_tool(spec: ToolSpec, only_reads: bool) -> Tool {
     Tool::new(spec.name, spec.description, spec.input_schema)
+        .annotate(ToolAnnotations::new().read_only(only_reads))
 }
 
 fn to_mcp_result(output: ToolOutput) -> CallToolResult {
